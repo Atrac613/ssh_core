@@ -26,6 +26,8 @@ Future<void> main() async {
   await _exerciseHostKeyVerification();
   await _exerciseSocketTransport();
   await _exerciseSecureSocketTransport();
+  await _exerciseSecureSocketTransportCompression(sshZlibCompression);
+  await _exerciseSecureSocketTransportCompression(sshZlibOpenSshCompression);
 
   final SshHostKey trustedHostKey = _testHostKey();
   final client = SshClient(
@@ -2409,6 +2411,260 @@ Future<void> _exerciseSecureSocketTransport() async {
   await server.close();
 }
 
+Future<void> _exerciseSecureSocketTransportCompression(
+  String compressionAlgorithm,
+) async {
+  final SigningKey hostSigningKey = SigningKey.generate();
+  final SshHostKey trustedHostKey = SshHostKey.decode(
+    (SshPayloadWriter()
+          ..writeString(sshEd25519HostKeyAlgorithm)
+          ..writeStringBytes(hostSigningKey.verifyKey.asTypedList))
+        .toBytes(),
+  );
+  final ServerSocket server = await ServerSocket.bind(
+    InternetAddress.loopbackIPv4,
+    0,
+  );
+
+  final Future<void> serverTask = () async {
+    final Socket socket = await server.first;
+    final StreamIterator<List<int>> iterator =
+        StreamIterator<List<int>>(socket);
+    final List<int> serverBuffer = <int>[];
+    final SshPlainPacketReaderState plainReader = SshPlainPacketReaderState();
+    final SshPlainPacketWriterState plainWriter = SshPlainPacketWriterState();
+    late SshPacketReaderState protectedReader;
+    late SshPacketWriterState protectedWriter;
+    _SmokeCompressionState incomingCompression =
+        compressionAlgorithm == sshZlibCompression
+            ? _SmokeZlibCompressionState()
+            : const _SmokeIdentityCompressionState();
+    _SmokeCompressionState outgoingCompression =
+        compressionAlgorithm == sshZlibCompression
+            ? _SmokeZlibCompressionState()
+            : const _SmokeIdentityCompressionState();
+
+    try {
+      final String clientBanner = await _readLine(iterator, serverBuffer);
+      assert(clientBanner == 'SSH-2.0-ssh_core-compression-test');
+
+      socket.add(utf8.encode('SSH-2.0-ssh_core-compression-server\r\n'));
+      await socket.flush();
+
+      final SshKexInitMessage clientKexInit = SshKexInitMessage.decodePayload(
+        (await _readPacketFromState(iterator, serverBuffer, plainReader))
+            .payload,
+      );
+      final SshKexInitMessage serverKexInit = SshKexInitMessage(
+        cookie: List<int>.generate(16, (int index) => index + 41),
+        kexAlgorithms: const <String>[sshCurve25519Sha256],
+        serverHostKeyAlgorithms: const <String>[sshEd25519HostKeyAlgorithm],
+        encryptionAlgorithmsClientToServer: const <String>[sshAes128CtrCipher],
+        encryptionAlgorithmsServerToClient: const <String>[sshAes128CtrCipher],
+        macAlgorithmsClientToServer: const <String>[sshHmacSha256Mac],
+        macAlgorithmsServerToClient: const <String>[sshHmacSha256Mac],
+        compressionAlgorithmsClientToServer: <String>[compressionAlgorithm],
+        compressionAlgorithmsServerToClient: <String>[compressionAlgorithm],
+      );
+      socket.add(plainWriter.encode(serverKexInit.encodePayload()));
+      await socket.flush();
+
+      final SshKexEcdhInitMessage clientEcdhInit =
+          SshKexEcdhInitMessage.decodePayload(
+        (await _readPacketFromState(iterator, serverBuffer, plainReader))
+            .payload,
+      );
+      final SshCurve25519KeyPair serverKeyPair =
+          SshCurve25519KeyPair.generate();
+      final BigInt sharedSecret = serverKeyPair.computeSharedSecret(
+        clientEcdhInit.clientEphemeralPublicKey,
+      );
+      final Uint8List exchangeHash =
+          const SshExchangeHashComputer().sha256FromInput(
+        SshKexEcdhExchangeHashInput(
+          clientIdentification: clientBanner,
+          serverIdentification: 'SSH-2.0-ssh_core-compression-server',
+          clientKexInitPayload: clientKexInit.encodePayload(),
+          serverKexInitPayload: serverKexInit.encodePayload(),
+          hostKey: trustedHostKey,
+          clientEphemeralPublicKey: clientEcdhInit.clientEphemeralPublicKey,
+          serverEphemeralPublicKey: serverKeyPair.publicKey,
+          sharedSecret: sharedSecret,
+        ),
+      );
+      final SshSignature exchangeHashSignature = SshSignature(
+        algorithm: sshEd25519HostKeyAlgorithm,
+        blob: hostSigningKey.sign(exchangeHash).signature.asTypedList,
+      );
+      socket.add(
+        plainWriter.encode(
+          SshKexEcdhReplyMessage(
+            hostKey: trustedHostKey,
+            serverEphemeralPublicKey: serverKeyPair.publicKey,
+            exchangeHashSignature: exchangeHashSignature.encode(),
+          ).encodePayload(),
+        ),
+      );
+      socket.add(plainWriter.encode(const SshNewKeysMessage().encodePayload()));
+      await socket.flush();
+
+      SshNewKeysMessage.decodePayload(
+        (await _readPacketFromState(iterator, serverBuffer, plainReader))
+            .payload,
+      );
+
+      final SshDerivedKeys derivedKeys = const SshKeyDerivation().deriveSha256(
+        context: SshKeyDerivationContext(
+          sharedSecret: sharedSecret,
+          exchangeHash: exchangeHash,
+          sessionIdentifier: exchangeHash,
+        ),
+        ivLength: 16,
+        encryptionKeyLength: 16,
+        integrityKeyLength: 32,
+      );
+      protectedReader = SshAesCtrHmacPacketReaderState(
+        encryptionKey: derivedKeys.encryptionKeyClientToServer,
+        initialVector: derivedKeys.initialIvClientToServer,
+        macKey: derivedKeys.integrityKeyClientToServer,
+        macAlgorithm: sshHmacSha256Mac,
+      );
+      protectedWriter = SshAesCtrHmacPacketWriterState(
+        encryptionKey: derivedKeys.encryptionKeyServerToClient,
+        initialVector: derivedKeys.initialIvServerToClient,
+        macKey: derivedKeys.integrityKeyServerToClient,
+      );
+
+      final SshServiceRequestMessage serviceRequest =
+          SshServiceRequestMessage.decodePayload(
+        (await _readApplicationPacketFromState(
+          iterator,
+          serverBuffer,
+          protectedReader,
+          incomingCompression,
+        ))
+            .payload,
+      );
+      assert(serviceRequest.serviceName == sshUserauthService);
+      socket.add(
+        protectedWriter.encode(
+          outgoingCompression.compress(
+            const SshServiceAcceptMessage(serviceName: sshUserauthService)
+                .encodePayload(),
+          ),
+        ),
+      );
+      await socket.flush();
+
+      final SshUserAuthRequestMessage authRequest =
+          SshUserAuthRequestMessage.decodePayload(
+        (await _readApplicationPacketFromState(
+          iterator,
+          serverBuffer,
+          protectedReader,
+          incomingCompression,
+        ))
+            .payload,
+      );
+      assert(authRequest.username == 'compressor');
+      socket.add(
+        protectedWriter.encode(
+          outgoingCompression.compress(
+            const SshUserAuthSuccessMessage().encodePayload(),
+          ),
+        ),
+      );
+      await socket.flush();
+
+      if (compressionAlgorithm == sshZlibOpenSshCompression) {
+        incomingCompression = _SmokeZlibCompressionState();
+        outgoingCompression = _SmokeZlibCompressionState();
+      }
+
+      final SshGlobalRequestMessage request =
+          SshGlobalRequestMessage.decodePayload(
+        (await _readApplicationPacketFromState(
+          iterator,
+          serverBuffer,
+          protectedReader,
+          incomingCompression,
+        ))
+            .payload,
+      );
+      assert(request.requestName == sshTcpIpForwardRequestName);
+      final SshPayloadReader requestReader =
+          SshPayloadReader(request.requestData);
+      assert(requestReader.readString() == '127.0.0.1');
+      assert(requestReader.readUint32() == 0);
+      requestReader.expectDone();
+      socket.add(
+        protectedWriter.encode(
+          outgoingCompression.compress(
+            SshRequestSuccessMessage(
+              responseData: (SshPayloadWriter()..writeUint32(4100)).toBytes(),
+            ).encodePayload(),
+          ),
+        ),
+      );
+      await socket.flush();
+
+      await socket.close();
+      socket.destroy();
+    } finally {
+      await iterator.cancel();
+    }
+  }();
+
+  final SshSecureSocketTransport transport = SshSecureSocketTransport(
+    encryptionAlgorithms: const <String>[sshAes128CtrCipher],
+    compressionAlgorithms: <String>[compressionAlgorithm],
+  );
+  final SshClient client = SshIoClientFactory.create(
+    config: SshClientConfig(
+      host: InternetAddress.loopbackIPv4.address,
+      port: server.port,
+      username: 'compressor',
+      transport: const SshTransportSettings(
+        clientIdentification: 'SSH-2.0-ssh_core-compression-test',
+      ),
+      hostKeyVerifier: SshStaticHostKeyVerifier(
+        trustedKeys: <SshTrustedHostKey>[
+          SshTrustedHostKey(
+            host: InternetAddress.loopbackIPv4.address,
+            port: server.port,
+            hostKey: trustedHostKey,
+          ),
+        ],
+      ),
+    ),
+    authMethods: const <SshAuthMethod>[SshPasswordAuthMethod(password: 'pw')],
+    transport: transport,
+  );
+
+  await client.connect();
+  final SshGlobalRequestReply reply =
+      await transport.sendGlobalRequestWithReply(
+    SshGlobalRequest(
+      type: sshTcpIpForwardRequestName,
+      wantReply: true,
+      payload: <String, Object?>{
+        'encodedPayload': const SshTcpIpForwardRequest(
+          bindHost: '127.0.0.1',
+          bindPort: 0,
+        ).encode(),
+      },
+    ),
+  );
+  assert(reply.isSuccess);
+  final SshPayloadReader replyReader = SshPayloadReader(reply.responseData);
+  assert(replyReader.readUint32() == 4100);
+  replyReader.expectDone();
+
+  await client.close();
+  await serverTask;
+  await server.close();
+}
+
 class _FakeTransport implements SshTransport {
   _FakeTransport({required SshHostKey hostKey}) : _hostKey = hostKey;
 
@@ -2516,6 +2772,23 @@ Future<SshBinaryPacket> _readPacketFromState(
   }
 }
 
+Future<SshBinaryPacket> _readApplicationPacketFromState(
+  StreamIterator<List<int>> iterator,
+  List<int> buffer,
+  SshPacketReaderState readerState,
+  _SmokeCompressionState compression,
+) async {
+  final SshBinaryPacket packet = await _readPacketFromState(
+    iterator,
+    buffer,
+    readerState,
+  );
+  return SshBinaryPacket(
+    payload: compression.decompress(packet.payload),
+    padding: packet.padding,
+  );
+}
+
 Future<List<int>> _readSocketMessage(
   StreamIterator<List<int>> iterator,
   List<int> buffer,
@@ -2586,6 +2859,51 @@ class _ScriptedPacketTransport implements SshPacketTransport {
   @override
   Future<void> writePacket(List<int> payload) async {
     writtenPayloads.add(List<int>.from(payload));
+  }
+}
+
+abstract class _SmokeCompressionState {
+  Uint8List compress(List<int> payload);
+
+  Uint8List decompress(List<int> payload);
+}
+
+class _SmokeIdentityCompressionState implements _SmokeCompressionState {
+  const _SmokeIdentityCompressionState();
+
+  @override
+  Uint8List compress(List<int> payload) => Uint8List.fromList(payload);
+
+  @override
+  Uint8List decompress(List<int> payload) => Uint8List.fromList(payload);
+}
+
+class _SmokeZlibCompressionState implements _SmokeCompressionState {
+  final RawZLibFilter _deflater = RawZLibFilter.deflateFilter();
+  final RawZLibFilter _inflater = RawZLibFilter.inflateFilter();
+
+  @override
+  Uint8List compress(List<int> payload) {
+    _deflater.process(payload, 0, payload.length);
+    return _takeBytes(_deflater);
+  }
+
+  @override
+  Uint8List decompress(List<int> payload) {
+    _inflater.process(payload, 0, payload.length);
+    return _takeBytes(_inflater);
+  }
+
+  Uint8List _takeBytes(RawZLibFilter filter) {
+    final BytesBuilder bytes = BytesBuilder(copy: false);
+    for (;;) {
+      final List<int>? chunk = filter.processed(flush: true);
+      if (chunk == null) {
+        break;
+      }
+      bytes.add(chunk);
+    }
+    return bytes.takeBytes();
   }
 }
 

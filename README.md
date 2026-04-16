@@ -39,13 +39,13 @@ Implemented in this scaffold:
   verification, RSA/ECDSA host-key verification, `aes*-ctr` packet
   encryption, and `hmac-sha2-256` / `hmac-sha2-512`
 - mid-session rekeying for secure socket transports
+- `zlib` and `zlib@openssh.com` compression for secure socket transports
 - `SshIoClientFactory` for wiring a live `SshClient` with protocol services
 - a smoke test that exercises the package with fake implementations
 - example wiring showing how a concrete implementation can plug into the stack
 
 Not implemented yet:
 
-- compression algorithms other than `none`
 - broader host-key curves, ciphers, and MACs beyond the current
   Ed25519/RSA/ECDSA + AES-CTR + HMAC-SHA2 set
 - remote forwarding with auto-assigned remote ports and advanced forwarding

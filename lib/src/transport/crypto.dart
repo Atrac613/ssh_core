@@ -23,6 +23,8 @@ const String sshAes256CtrCipher = 'aes256-ctr';
 const String sshHmacSha256Mac = 'hmac-sha2-256';
 const String sshHmacSha512Mac = 'hmac-sha2-512';
 const String sshNoCompression = 'none';
+const String sshZlibCompression = 'zlib';
+const String sshZlibOpenSshCompression = 'zlib@openssh.com';
 
 class SshTransportCryptoException implements Exception {
   const SshTransportCryptoException(this.message);

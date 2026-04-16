@@ -66,6 +66,13 @@ class SshSecureSocketTransport
       ListQueue<Completer<SshGlobalRequestReply>>();
   SshPacketWriterState _writerState = SshPlainPacketWriterState();
   SshPacketReaderState _readerState = SshPlainPacketReaderState();
+  _SshCompressionState _incomingCompression =
+      const _SshIdentityCompressionState();
+  _SshCompressionState _outgoingCompression =
+      const _SshIdentityCompressionState();
+  bool _hasAuthenticated = false;
+  bool _delayedIncomingCompressionPending = false;
+  bool _delayedOutgoingCompressionPending = false;
   SshHandshakeInfo? _handshake;
   SshTransportState _state = SshTransportState.disconnected;
   Future<void>? _readLoop;
@@ -125,6 +132,11 @@ class SshSecureSocketTransport
       _pendingGlobalRequestReplies.clear();
       _writerState = SshPlainPacketWriterState();
       _readerState = SshPlainPacketReaderState();
+      _incomingCompression = const _SshIdentityCompressionState();
+      _outgoingCompression = const _SshIdentityCompressionState();
+      _hasAuthenticated = false;
+      _delayedIncomingCompressionPending = false;
+      _delayedOutgoingCompressionPending = false;
       _activeRekey = null;
       _pendingClientKexInit = null;
       _terminalError = null;
@@ -411,6 +423,7 @@ class SshSecureSocketTransport
       macAlgorithm: negotiatedAlgorithms.macServerToClient,
       codec: SshPacketCodec(blockSize: serverIvLength),
     );
+    _configureCompression(negotiatedAlgorithms);
 
     final SshHandshakeInfo handshake = SshHandshakeInfo(
       localIdentification: localIdentification,
@@ -447,7 +460,9 @@ class SshSecureSocketTransport
     List<int> payload, {
     required bool countTowardsRekey,
   }) async {
-    final Uint8List encodedPacket = _writerState.encode(payload);
+    final Uint8List encodedPacket = _writerState.encode(
+      _outgoingCompression.compress(payload),
+    );
     await writeBytes(encodedPacket);
     if (countTowardsRekey) {
       _sentPacketsSinceKeyExchange += 1;
@@ -521,7 +536,8 @@ class SshSecureSocketTransport
   Future<void> _runReadLoop() async {
     try {
       for (;;) {
-        final SshBinaryPacket packet = await _readPacketWithState(_readerState);
+        final SshBinaryPacket packet =
+            await _readApplicationPacketWithState(_readerState);
         final bool handledInternally = await _handleInternalPacket(packet);
         if (handledInternally) {
           continue;
@@ -529,6 +545,10 @@ class SshSecureSocketTransport
 
         _receivedPacketsSinceKeyExchange += 1;
         _receivedBytesSinceKeyExchange += packet.frameLength;
+        if (packet.messageId == SshMessageId.userauthSuccess.value) {
+          _hasAuthenticated = true;
+          _activateDelayedCompressionIfNeeded();
+        }
         _enqueuePacket(packet);
 
         if (_shouldInitiateRekey()) {
@@ -543,6 +563,20 @@ class SshSecureSocketTransport
       _terminalStackTrace = stackTrace;
       _failPending(error, stackTrace);
     }
+  }
+
+  Future<SshBinaryPacket> _readApplicationPacketWithState(
+    SshPacketReaderState readerState,
+  ) async {
+    final SshBinaryPacket packet = await _readPacketWithState(readerState);
+    if (_incomingCompression is _SshIdentityCompressionState) {
+      return packet;
+    }
+
+    return SshBinaryPacket(
+      payload: _incomingCompression.decompress(packet.payload),
+      padding: packet.padding,
+    );
   }
 
   Future<bool> _handleInternalPacket(SshBinaryPacket packet) async {
@@ -587,7 +621,7 @@ class SshSecureSocketTransport
           payload,
           countTowardsRekey: false,
         ),
-        readPacket: () => _readPacketWithState(_readerState),
+        readPacket: () => _readApplicationPacketWithState(_readerState),
       );
 
       _handshake = keyExchange.handshake;
@@ -684,13 +718,83 @@ class SshSecureSocketTransport
     sshCipherKeyLength(negotiated.encryptionServerToClient);
     sshMacKeyLength(negotiated.macClientToServer);
     sshMacKeyLength(negotiated.macServerToClient);
+    _validateCompressionAlgorithm(negotiated.compressionClientToServer);
+    _validateCompressionAlgorithm(negotiated.compressionServerToClient);
+  }
 
-    if (negotiated.compressionClientToServer != sshNoCompression ||
-        negotiated.compressionServerToClient != sshNoCompression) {
-      throw const SshTransportCryptoException(
-        'Only "none" SSH compression is currently supported.',
-      );
+  void _configureCompression(SshNegotiatedAlgorithms negotiated) {
+    _delayedOutgoingCompressionPending =
+        negotiated.compressionClientToServer == sshZlibOpenSshCompression &&
+            !_hasAuthenticated;
+    _delayedIncomingCompressionPending =
+        negotiated.compressionServerToClient == sshZlibOpenSshCompression &&
+            !_hasAuthenticated;
+
+    _outgoingCompression = _delayedOutgoingCompressionPending
+        ? const _SshIdentityCompressionState()
+        : _createCompressionState(
+            _normalizeCompressionAlgorithm(
+              negotiated.compressionClientToServer,
+            ),
+          );
+    _incomingCompression = _delayedIncomingCompressionPending
+        ? const _SshIdentityCompressionState()
+        : _createCompressionState(
+            _normalizeCompressionAlgorithm(
+              negotiated.compressionServerToClient,
+            ),
+          );
+  }
+
+  void _activateDelayedCompressionIfNeeded() {
+    if (_delayedOutgoingCompressionPending) {
+      _outgoingCompression = _createCompressionState(sshZlibCompression);
+      _delayedOutgoingCompressionPending = false;
     }
+    if (_delayedIncomingCompressionPending) {
+      _incomingCompression = _createCompressionState(sshZlibCompression);
+      _delayedIncomingCompressionPending = false;
+    }
+  }
+
+  void _validateCompressionAlgorithm(String algorithm) {
+    switch (algorithm) {
+      case sshNoCompression:
+      case sshZlibCompression:
+      case sshZlibOpenSshCompression:
+        return;
+    }
+
+    throw SshTransportCryptoException(
+      'Unsupported SSH compression algorithm: $algorithm.',
+    );
+  }
+
+  String _normalizeCompressionAlgorithm(String algorithm) {
+    switch (algorithm) {
+      case sshNoCompression:
+        return sshNoCompression;
+      case sshZlibCompression:
+      case sshZlibOpenSshCompression:
+        return sshZlibCompression;
+    }
+
+    throw SshTransportCryptoException(
+      'Unsupported SSH compression algorithm: $algorithm.',
+    );
+  }
+
+  _SshCompressionState _createCompressionState(String algorithm) {
+    switch (algorithm) {
+      case sshNoCompression:
+        return const _SshIdentityCompressionState();
+      case sshZlibCompression:
+        return _SshZLibCompressionState();
+    }
+
+    throw SshTransportCryptoException(
+      'Unsupported SSH compression algorithm: $algorithm.',
+    );
   }
 
   Future<void> _writePlainPacket(List<int> payload) async {
@@ -838,6 +942,51 @@ class SshSecureSocketTransport
       await socket.close();
       socket.destroy();
     }
+  }
+}
+
+abstract class _SshCompressionState {
+  Uint8List compress(List<int> payload);
+
+  Uint8List decompress(List<int> payload);
+}
+
+class _SshIdentityCompressionState implements _SshCompressionState {
+  const _SshIdentityCompressionState();
+
+  @override
+  Uint8List compress(List<int> payload) => Uint8List.fromList(payload);
+
+  @override
+  Uint8List decompress(List<int> payload) => Uint8List.fromList(payload);
+}
+
+class _SshZLibCompressionState implements _SshCompressionState {
+  final RawZLibFilter _deflater = RawZLibFilter.deflateFilter();
+  final RawZLibFilter _inflater = RawZLibFilter.inflateFilter();
+
+  @override
+  Uint8List compress(List<int> payload) {
+    _deflater.process(payload, 0, payload.length);
+    return _takeProcessedBytes(_deflater);
+  }
+
+  @override
+  Uint8List decompress(List<int> payload) {
+    _inflater.process(payload, 0, payload.length);
+    return _takeProcessedBytes(_inflater);
+  }
+
+  Uint8List _takeProcessedBytes(RawZLibFilter filter) {
+    final BytesBuilder bytes = BytesBuilder(copy: false);
+    for (;;) {
+      final List<int>? chunk = filter.processed(flush: true);
+      if (chunk == null) {
+        break;
+      }
+      bytes.add(chunk);
+    }
+    return bytes.takeBytes();
   }
 }
 
