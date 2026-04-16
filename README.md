@@ -22,6 +22,7 @@ Implemented in this scaffold:
 - packet-backed shell session manager and exec service
 - session and exec channel-request helpers including PTY/env/exit messages
 - SFTP packet helpers for init/version/open/read/write/status/name flows
+- packet-backed SFTP subsystem for list/read/write/mkdir/delete flows
 - forwarding packet helpers for `tcpip-forward` and TCP/IP channel payloads
 - SOCKS5 helpers for dynamic port-forward request and reply parsing
 - transport payload/message codec and `SSH_MSG_KEXINIT` helper

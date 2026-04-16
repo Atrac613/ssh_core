@@ -19,6 +19,7 @@ export 'src/sessions/protocol.dart';
 export 'src/sessions/protocol_session_manager.dart';
 export 'src/sessions/session.dart';
 export 'src/sftp/protocol.dart';
+export 'src/sftp/protocol_sftp.dart';
 export 'src/sftp/sftp.dart';
 export 'src/transport/global_request.dart';
 export 'src/transport/host_key.dart';

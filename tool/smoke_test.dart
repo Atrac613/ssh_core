@@ -16,6 +16,7 @@ Future<void> main() async {
   await _exerciseProtocolSessionManager();
   await _exerciseProtocolExecService();
   await _exerciseSftpProtocol();
+  await _exerciseProtocolSftpSubsystem();
   await _exerciseForwardingProtocol();
   await _exerciseSocks5Protocol();
   await _exerciseHostKeyVerification();
@@ -1231,6 +1232,214 @@ Future<void> _exerciseSftpProtocol() async {
   );
   assert(decodedHandleRequest.type == SftpPacketType.readdir);
   assert(_sameBytes(decodedHandleRequest.handle, const <int>[13, 14, 15]));
+}
+
+Future<void> _exerciseProtocolSftpSubsystem() async {
+  final SftpPacketCodec codec = const SftpPacketCodec();
+  final _ScriptedPacketTransport transport = _ScriptedPacketTransport(
+    scriptedPackets: <List<int>>[
+      SshChannelOpenConfirmationMessage(
+        recipientChannel: 0,
+        senderChannel: 71,
+        initialWindowSize: 65536,
+        maximumPacketSize: 32768,
+      ).encodePayload(),
+      const SshChannelSuccessMessage(recipientChannel: 0).encodePayload(),
+      SshChannelDataMessage(
+        recipientChannel: 0,
+        data: codec.encode(
+          SftpVersionMessage(version: 3).toPacket(),
+        ),
+      ).encodePayload(),
+      SshChannelDataMessage(
+        recipientChannel: 0,
+        data: codec.encode(
+          SftpPacket(
+            type: SftpPacketType.handle,
+            requestId: 1,
+            payload:
+                SftpHandleMessage(handle: const <int>[1, 2, 3]).encodePayload(),
+          ),
+        ),
+      ).encodePayload(),
+      SshChannelDataMessage(
+        recipientChannel: 0,
+        data: codec.encode(
+          SftpPacket(
+            type: SftpPacketType.name,
+            requestId: 2,
+            payload: SftpNameMessage(
+              entries: <SftpNameEntry>[
+                SftpNameEntry(
+                  filename: 'demo.txt',
+                  longname: 'demo.txt',
+                  attributes: SftpFileAttributes(
+                    size: 4,
+                    permissions: 0x8000,
+                    modifiedTime: 1700000000,
+                  ),
+                ),
+              ],
+            ).encodePayload(),
+          ),
+        ),
+      ).encodePayload(),
+      SshChannelDataMessage(
+        recipientChannel: 0,
+        data: codec.encode(
+          SftpPacket(
+            type: SftpPacketType.status,
+            requestId: 3,
+            payload: const SftpStatusMessage(
+              code: SftpStatusCode.eof,
+              message: 'EOF',
+            ).encodePayload(),
+          ),
+        ),
+      ).encodePayload(),
+      SshChannelDataMessage(
+        recipientChannel: 0,
+        data: codec.encode(
+          SftpPacket(
+            type: SftpPacketType.status,
+            requestId: 4,
+            payload: const SftpStatusMessage(
+              code: SftpStatusCode.ok,
+              message: 'closed',
+            ).encodePayload(),
+          ),
+        ),
+      ).encodePayload(),
+      SshChannelDataMessage(
+        recipientChannel: 0,
+        data: codec.encode(
+          SftpPacket(
+            type: SftpPacketType.handle,
+            requestId: 5,
+            payload:
+                SftpHandleMessage(handle: const <int>[4, 5, 6]).encodePayload(),
+          ),
+        ),
+      ).encodePayload(),
+      SshChannelDataMessage(
+        recipientChannel: 0,
+        data: codec.encode(
+          SftpPacket(
+            type: SftpPacketType.data,
+            requestId: 6,
+            payload: SftpDataMessage(data: utf8.encode('file')).encodePayload(),
+          ),
+        ),
+      ).encodePayload(),
+      SshChannelDataMessage(
+        recipientChannel: 0,
+        data: codec.encode(
+          SftpPacket(
+            type: SftpPacketType.status,
+            requestId: 7,
+            payload: const SftpStatusMessage(
+              code: SftpStatusCode.eof,
+              message: 'EOF',
+            ).encodePayload(),
+          ),
+        ),
+      ).encodePayload(),
+      SshChannelDataMessage(
+        recipientChannel: 0,
+        data: codec.encode(
+          SftpPacket(
+            type: SftpPacketType.status,
+            requestId: 8,
+            payload: const SftpStatusMessage(
+              code: SftpStatusCode.ok,
+              message: 'closed',
+            ).encodePayload(),
+          ),
+        ),
+      ).encodePayload(),
+      SshChannelDataMessage(
+        recipientChannel: 0,
+        data: codec.encode(
+          SftpPacket(
+            type: SftpPacketType.handle,
+            requestId: 9,
+            payload:
+                SftpHandleMessage(handle: const <int>[7, 8, 9]).encodePayload(),
+          ),
+        ),
+      ).encodePayload(),
+      SshChannelDataMessage(
+        recipientChannel: 0,
+        data: codec.encode(
+          SftpPacket(
+            type: SftpPacketType.status,
+            requestId: 10,
+            payload: const SftpStatusMessage(
+              code: SftpStatusCode.ok,
+              message: 'written',
+            ).encodePayload(),
+          ),
+        ),
+      ).encodePayload(),
+      SshChannelDataMessage(
+        recipientChannel: 0,
+        data: codec.encode(
+          SftpPacket(
+            type: SftpPacketType.status,
+            requestId: 11,
+            payload: const SftpStatusMessage(
+              code: SftpStatusCode.ok,
+              message: 'closed',
+            ).encodePayload(),
+          ),
+        ),
+      ).encodePayload(),
+      SshChannelDataMessage(
+        recipientChannel: 0,
+        data: codec.encode(
+          SftpPacket(
+            type: SftpPacketType.status,
+            requestId: 12,
+            payload: const SftpStatusMessage(
+              code: SftpStatusCode.ok,
+              message: 'mkdir',
+            ).encodePayload(),
+          ),
+        ),
+      ).encodePayload(),
+      SshChannelDataMessage(
+        recipientChannel: 0,
+        data: codec.encode(
+          SftpPacket(
+            type: SftpPacketType.status,
+            requestId: 13,
+            payload: const SftpStatusMessage(
+              code: SftpStatusCode.ok,
+              message: 'remove',
+            ).encodePayload(),
+          ),
+        ),
+      ).encodePayload(),
+      const SshChannelEofMessage(recipientChannel: 0).encodePayload(),
+      const SshChannelCloseMessage(recipientChannel: 0).encodePayload(),
+    ],
+  );
+  final SshProtocolSftpSubsystem subsystem = SshProtocolSftpSubsystem(
+    channelFactory: SshPacketChannelFactory(transport: transport),
+  );
+  final SftpClient client = await subsystem.open();
+  final List<SftpFileEntry> entries = await client.listDirectory('/tmp');
+  final List<int> fileBytes = await client.readFile('/tmp/demo.txt');
+  await client.writeFile('/tmp/demo.txt', utf8.encode('file'));
+  await client.createDirectory('/tmp/new-dir');
+  await client.delete('/tmp/demo.txt');
+  await client.close();
+
+  assert(entries.single.path == '/tmp/demo.txt');
+  assert(entries.single.size == 4);
+  assert(fileBytes.length == 4);
+  assert(utf8.decode(fileBytes) == 'file');
+  assert(transport.writtenPayloads.length >= 8);
 }
 
 Future<void> _exerciseForwardingProtocol() async {
