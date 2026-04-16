@@ -5,6 +5,7 @@ import '../forwarding/port_forwarding.dart';
 import '../pty/pty.dart';
 import '../sessions/session.dart';
 import '../sftp/sftp.dart';
+import '../transport/host_key.dart';
 import '../transport/transport.dart';
 import 'config.dart';
 import 'exceptions.dart';
@@ -43,10 +44,11 @@ class SshClient {
     _state = SshClientState.connecting;
 
     try {
-      final handshake = await transport.connect(
+      final SshHandshakeInfo handshake = await transport.connect(
         endpoint: config.endpoint,
         settings: config.transport,
       );
+      await _verifyHostKeyIfNeeded(handshake);
       final result = await authenticator.authenticate(
         context: SshAuthContext(
           config: config,
@@ -170,5 +172,35 @@ class SshClient {
       'Invalid SSH client state: $_state. '
       'Allowed states: ${allowedStates.join(', ')}.',
     );
+  }
+
+  Future<void> _verifyHostKeyIfNeeded(SshHandshakeInfo handshake) async {
+    final SshHostKeyVerifier? verifier = config.hostKeyVerifier;
+    if (verifier == null) {
+      return;
+    }
+
+    final SshHostKey? hostKey = handshake.hostKey;
+    if (hostKey == null) {
+      throw const SshHostKeyException(
+        'SSH transport did not provide a host key for verification.',
+      );
+    }
+
+    final SshHostKeyVerificationResult result = await verifier.verify(
+      SshHostKeyVerificationContext(
+        host: config.host,
+        port: config.port,
+        localIdentification: handshake.localIdentification,
+        remoteIdentification: handshake.remoteIdentification,
+        hostKey: hostKey,
+      ),
+    );
+
+    if (!result.isSuccess) {
+      throw SshHostKeyException(
+        result.message ?? 'SSH host key verification failed.',
+      );
+    }
   }
 }

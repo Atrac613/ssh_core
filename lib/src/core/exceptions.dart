@@ -15,3 +15,7 @@ class SshStateException extends SshException {
 class SshAuthException extends SshException {
   const SshAuthException(super.message, {super.cause});
 }
+
+class SshHostKeyException extends SshException {
+  const SshHostKeyException(super.message, {super.cause});
+}

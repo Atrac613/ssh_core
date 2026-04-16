@@ -7,12 +7,22 @@ import 'package:ssh_core/ssh_core_io.dart';
 
 Future<void> main() async {
   await _exerciseTransportPrimitives();
+  await _exerciseHostKeyVerification();
   await _exerciseSocketTransport();
 
+  final SshHostKey trustedHostKey = _testHostKey();
   final client = SshClient(
-    config: const SshClientConfig(host: 'localhost', username: 'tester'),
+    config: SshClientConfig(
+      host: 'localhost',
+      username: 'tester',
+      hostKeyVerifier: SshStaticHostKeyVerifier(
+        trustedKeys: <SshTrustedHostKey>[
+          SshTrustedHostKey(host: 'localhost', hostKey: trustedHostKey),
+        ],
+      ),
+    ),
     authMethods: const <SshAuthMethod>[SshPasswordAuthMethod(password: 'pw')],
-    transport: _FakeTransport(),
+    transport: _FakeTransport(hostKey: trustedHostKey),
     authenticator: _FakeAuthenticator(),
     channelFactory: _FakeChannelFactory(),
     sessionManager: _FakeSessionManager(),
@@ -218,6 +228,44 @@ Future<void> _exerciseTransportPrimitives() async {
   assert(negotiatedAlgorithms.ignoreGuessedServerPacket);
 }
 
+Future<void> _exerciseHostKeyVerification() async {
+  final SshHostKey hostKey = _testHostKey();
+  assert(hostKey.algorithm == 'ssh-ed25519');
+  assert(hostKey.base64Encoded.isNotEmpty);
+
+  final SshStaticHostKeyVerifier verifier = SshStaticHostKeyVerifier(
+    trustedKeys: <SshTrustedHostKey>[
+      SshTrustedHostKey(host: 'localhost', hostKey: hostKey),
+    ],
+  );
+  final SshHostKeyVerificationResult success = await verifier.verify(
+    SshHostKeyVerificationContext(
+      host: 'localhost',
+      port: 22,
+      localIdentification: 'SSH-2.0-ssh_core-test',
+      remoteIdentification: 'SSH-2.0-demo-server',
+      hostKey: hostKey,
+    ),
+  );
+  assert(success.isSuccess);
+
+  final SshHostKeyVerificationResult failure = await verifier.verify(
+    SshHostKeyVerificationContext(
+      host: 'localhost',
+      port: 22,
+      localIdentification: 'SSH-2.0-ssh_core-test',
+      remoteIdentification: 'SSH-2.0-demo-server',
+      hostKey: SshHostKey.decode(
+        (SshPayloadWriter()
+              ..writeString('ssh-ed25519')
+              ..writeStringBytes(const <int>[9, 9, 9]))
+            .toBytes(),
+      ),
+    ),
+  );
+  assert(!failure.isSuccess);
+}
+
 Future<void> _exerciseSocketTransport() async {
   final SshPacketCodec codec = SshPacketCodec(
     paddingBytesFactory: (int length) =>
@@ -294,8 +342,11 @@ Future<void> _exerciseSocketTransport() async {
 }
 
 class _FakeTransport implements SshTransport {
+  _FakeTransport({required SshHostKey hostKey}) : _hostKey = hostKey;
+
   SshTransportState _state = SshTransportState.disconnected;
   final SshBannerExchange _bannerExchange = const SshBannerExchange();
+  final SshHostKey _hostKey;
 
   @override
   SshTransportState get state => _state;
@@ -321,6 +372,7 @@ class _FakeTransport implements SshTransport {
 
     return SshHandshakeInfo.fromBannerExchange(
       exchange,
+      hostKey: _hostKey,
       negotiatedAlgorithms: const <String, String>{'kex': 'curve25519-sha256'},
     );
   }
@@ -332,6 +384,13 @@ class _FakeTransport implements SshTransport {
 
   @override
   Future<void> sendGlobalRequest(SshGlobalRequest request) async {}
+}
+
+SshHostKey _testHostKey() {
+  final SshPayloadWriter writer = SshPayloadWriter()
+    ..writeString('ssh-ed25519')
+    ..writeStringBytes(const <int>[1, 2, 3, 4, 5, 6]);
+  return SshHostKey.decode(writer.toBytes());
 }
 
 class _FakeAuthenticator implements SshAuthenticator {

@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'host_key.dart';
+
 class SshEndpoint {
   const SshEndpoint({required this.host, this.port = 22});
 
@@ -28,22 +30,26 @@ class SshHandshakeInfo {
     required this.localIdentification,
     required this.remoteIdentification,
     this.negotiatedAlgorithms = const <String, String>{},
+    this.hostKey,
   });
 
   factory SshHandshakeInfo.fromBannerExchange(
     SshBannerExchangeResult exchange, {
     Map<String, String> negotiatedAlgorithms = const <String, String>{},
+    SshHostKey? hostKey,
   }) {
     return SshHandshakeInfo(
       localIdentification: exchange.localBanner.value,
       remoteIdentification: exchange.remoteBanner.value,
       negotiatedAlgorithms: negotiatedAlgorithms,
+      hostKey: hostKey,
     );
   }
 
   final String localIdentification;
   final String remoteIdentification;
   final Map<String, String> negotiatedAlgorithms;
+  final SshHostKey? hostKey;
 }
 
 class SshGlobalRequest {

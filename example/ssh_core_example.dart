@@ -3,12 +3,21 @@ import 'dart:convert';
 import 'package:ssh_core/ssh_core.dart';
 
 Future<void> main() async {
+  final SshHostKey trustedHostKey = _demoHostKey();
   final client = SshClient(
-    config: const SshClientConfig(host: 'example.com', username: 'demo'),
+    config: SshClientConfig(
+      host: 'example.com',
+      username: 'demo',
+      hostKeyVerifier: SshStaticHostKeyVerifier(
+        trustedKeys: <SshTrustedHostKey>[
+          SshTrustedHostKey(host: 'example.com', hostKey: trustedHostKey),
+        ],
+      ),
+    ),
     authMethods: const <SshAuthMethod>[
       SshPasswordAuthMethod(password: 'secret'),
     ],
-    transport: DemoTransport(),
+    transport: DemoTransport(hostKey: trustedHostKey),
     authenticator: DemoAuthenticator(),
     channelFactory: DemoChannelFactory(),
     sessionManager: DemoSessionManager(),
@@ -31,9 +40,12 @@ Future<void> main() async {
 }
 
 class DemoTransport implements SshTransport {
+  DemoTransport({required SshHostKey hostKey}) : _hostKey = hostKey;
+
   final SshBannerExchange _bannerExchange = const SshBannerExchange();
   final SshAlgorithmNegotiator _algorithmNegotiator =
       const SshAlgorithmNegotiator();
+  final SshHostKey _hostKey;
 
   @override
   SshTransportState get state => SshTransportState.connected;
@@ -94,6 +106,7 @@ class DemoTransport implements SshTransport {
     return SshHandshakeInfo.fromBannerExchange(
       exchange,
       negotiatedAlgorithms: algorithms.asHandshakeMap(),
+      hostKey: _hostKey,
     );
   }
 
@@ -250,4 +263,11 @@ class DemoPortForwardingService implements SshPortForwardingService {
       bindPort: request.bindPort,
     );
   }
+}
+
+SshHostKey _demoHostKey() {
+  final SshPayloadWriter writer = SshPayloadWriter()
+    ..writeString('ssh-ed25519')
+    ..writeStringBytes(const <int>[1, 2, 3, 4, 5, 6]);
+  return SshHostKey.decode(writer.toBytes());
 }

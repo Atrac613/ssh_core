@@ -17,6 +17,7 @@ Implemented in this scaffold:
 - transport, auth, channel, session, PTY, exec, SFTP, and forwarding contracts
 - transport payload/message codec and `SSH_MSG_KEXINIT` helper
 - transport algorithm negotiation for client/server `KEXINIT` proposals
+- host key parsing and verifier contracts for the pre-auth handshake
 - transport banner parsing/exchange helpers and binary packet framing helpers
 - a smoke test that exercises the package with fake implementations
 - example wiring showing how a concrete implementation can plug into the stack
@@ -46,15 +47,26 @@ Not implemented yet:
 import 'package:ssh_core/ssh_core.dart';
 
 Future<void> main() async {
+  final trustedHostKey = SshHostKey.decode(
+    (SshPayloadWriter()
+          ..writeString('ssh-ed25519')
+          ..writeStringBytes(const [1, 2, 3, 4, 5, 6]))
+        .toBytes(),
+  );
   final client = SshClient(
-    config: const SshClientConfig(
+    config: SshClientConfig(
       host: 'example.com',
       username: 'demo',
+      hostKeyVerifier: SshStaticHostKeyVerifier(
+        trustedKeys: [
+          SshTrustedHostKey(host: 'example.com', hostKey: trustedHostKey),
+        ],
+      ),
     ),
     authMethods: const [
       SshPasswordAuthMethod(password: 'secret'),
     ],
-    transport: DemoTransport(),
+    transport: DemoTransport(hostKey: trustedHostKey),
     authenticator: DemoAuthenticator(),
     channelFactory: DemoChannelFactory(),
     sessionManager: DemoSessionManager(),
@@ -65,7 +77,7 @@ Future<void> main() async {
 
   await client.connect();
   final result = await client.exec('uname -a');
-  print(result.stdoutText);
+  print(result.stdoutText.trim());
   await client.close();
 }
 ```
@@ -82,6 +94,7 @@ handshake steps:
 - `SshTransportStream` for async banner and packet I/O over byte streams
 - `SshSocketTransport` in `package:ssh_core/ssh_core_io.dart`
 - `SshPayloadWriter`, `SshPayloadReader`, and `SshKexInitMessage`
+- `SshHostKey`, `SshHostKeyVerifier`, and `SshStaticHostKeyVerifier`
 - `SshAlgorithmNegotiator` and `SshNegotiatedAlgorithms`
 - `SshLineReader` for chunked banner line parsing from socket bytes
 - `SshPacketCodec` for SSH binary packet framing
