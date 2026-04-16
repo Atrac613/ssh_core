@@ -221,6 +221,45 @@ class SshBannerExchange {
 
 typedef SshPaddingBytesFactory = List<int> Function(int length);
 
+class SshLineReader {
+  SshLineReader({this.maxLineLength = 255}) : assert(maxLineLength > 0);
+
+  final int maxLineLength;
+  final List<int> _buffer = <int>[];
+
+  int get pendingByteCount => _buffer.length;
+
+  void add(List<int> bytes) {
+    _buffer.addAll(bytes);
+    if (_buffer.length > maxLineLength && !_buffer.contains(10)) {
+      throw FormatException(
+        'SSH line reader exceeded the maximum line length of $maxLineLength.',
+      );
+    }
+  }
+
+  String? readLine() {
+    final int lineFeedIndex = _buffer.indexOf(10);
+    if (lineFeedIndex < 0) {
+      return null;
+    }
+
+    final int contentEnd = lineFeedIndex > 0 && _buffer[lineFeedIndex - 1] == 13
+        ? lineFeedIndex - 1
+        : lineFeedIndex;
+    final List<int> lineBytes = _buffer.sublist(0, contentEnd);
+    _buffer.removeRange(0, lineFeedIndex + 1);
+
+    if (lineBytes.length + 2 > maxLineLength) {
+      throw FormatException(
+        'SSH line reader exceeded the maximum line length of $maxLineLength.',
+      );
+    }
+
+    return utf8.decode(lineBytes);
+  }
+}
+
 class SshBinaryPacket {
   SshBinaryPacket({
     required List<int> payload,

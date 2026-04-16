@@ -53,14 +53,28 @@ Future<void> main() async {
 }
 
 void _exerciseTransportPrimitives() {
+  final SshLineReader lineReader = SshLineReader();
+  lineReader.add(
+    utf8.encode(
+        'prelude one\r\nprelude two\r\nSSH-2.0-demo-server integration\r\n'),
+  );
+
+  final List<String> remoteLines = <String>[];
+  for (;;) {
+    final String? line = lineReader.readLine();
+    if (line == null) {
+      break;
+    }
+    remoteLines.add(line);
+  }
+
+  assert(remoteLines.length == 3);
+  assert(lineReader.pendingByteCount == 0);
+
   final SshBannerExchange bannerExchange = const SshBannerExchange();
   final SshBannerExchangeResult exchange = bannerExchange.resolve(
     localIdentification: 'SSH-2.0-ssh_core-test',
-    remoteLines: const <String>[
-      'prelude one',
-      'prelude two',
-      'SSH-2.0-demo-server integration',
-    ],
+    remoteLines: remoteLines,
   );
 
   assert(exchange.localBanner.protocolVersion == '2.0');
@@ -94,6 +108,7 @@ void _exerciseTransportPrimitives() {
 class _FakeTransport implements SshTransport {
   SshTransportState _state = SshTransportState.disconnected;
   final SshBannerExchange _bannerExchange = const SshBannerExchange();
+  final SshLineReader _lineReader = SshLineReader();
 
   @override
   SshTransportState get state => _state;
@@ -104,12 +119,22 @@ class _FakeTransport implements SshTransport {
     required SshTransportSettings settings,
   }) async {
     _state = SshTransportState.connected;
+    _lineReader.add(
+      utf8.encode('fake daemon boot message\r\nSSH-2.0-fake\r\n'),
+    );
+
+    final List<String> remoteLines = <String>[];
+    for (;;) {
+      final String? line = _lineReader.readLine();
+      if (line == null) {
+        break;
+      }
+      remoteLines.add(line);
+    }
+
     final SshBannerExchangeResult exchange = _bannerExchange.resolve(
       localIdentification: settings.clientIdentification,
-      remoteLines: const <String>[
-        'fake daemon boot message',
-        'SSH-2.0-fake',
-      ],
+      remoteLines: remoteLines,
     );
 
     return SshHandshakeInfo.fromBannerExchange(

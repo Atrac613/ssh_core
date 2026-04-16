@@ -76,6 +76,7 @@ The transport module now includes low-level helpers for the earliest SSH
 handshake steps:
 
 - `SshTransportBanner` and `SshBannerExchange` for SSH identification strings
+- `SshLineReader` for chunked banner line parsing from socket bytes
 - `SshPacketCodec` for SSH binary packet framing
 - `SshPacketReader` for reading framed packets from chunked byte streams
 

@@ -32,6 +32,7 @@ Future<void> main() async {
 
 class DemoTransport implements SshTransport {
   final SshBannerExchange _bannerExchange = const SshBannerExchange();
+  final SshLineReader _lineReader = SshLineReader();
 
   @override
   SshTransportState get state => SshTransportState.connected;
@@ -41,12 +42,22 @@ class DemoTransport implements SshTransport {
     required SshEndpoint endpoint,
     required SshTransportSettings settings,
   }) async {
+    _lineReader.add(
+      utf8.encode('demo prelude line\r\nSSH-2.0-demo-server example\r\n'),
+    );
+
+    final List<String> remoteLines = <String>[];
+    for (;;) {
+      final String? line = _lineReader.readLine();
+      if (line == null) {
+        break;
+      }
+      remoteLines.add(line);
+    }
+
     final SshBannerExchangeResult exchange = _bannerExchange.resolve(
       localIdentification: settings.clientIdentification,
-      remoteLines: const <String>[
-        'demo prelude line',
-        'SSH-2.0-demo-server example',
-      ],
+      remoteLines: remoteLines,
     );
 
     return SshHandshakeInfo.fromBannerExchange(
