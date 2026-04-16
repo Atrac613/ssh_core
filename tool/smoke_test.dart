@@ -19,6 +19,7 @@ Future<void> main() async {
   await _exerciseProtocolSftpSubsystem();
   await _exerciseForwardingProtocol();
   await _exerciseProtocolPortForwardingService();
+  await _exerciseIoPortForwardingService();
   await _exerciseSocks5Protocol();
   await _exerciseHostKeyVerification();
   await _exerciseSocketTransport();
@@ -1647,6 +1648,202 @@ Future<void> _exerciseProtocolPortForwardingService() async {
   );
 }
 
+Future<void> _exerciseIoPortForwardingService() async {
+  final _ScriptedPacketTransport inboundTransport = _ScriptedPacketTransport(
+    scriptedPackets: <List<int>>[
+      SshForwardedTcpIpChannelOpenData(
+        connectedHost: '0.0.0.0',
+        connectedPort: 2222,
+        originatorHost: '127.0.0.1',
+        originatorPort: 44000,
+      ).toChannelOpenMessage(senderChannel: 77).encodePayload(),
+    ],
+  );
+  final SshPacketChannelFactory inboundFactory = SshPacketChannelFactory(
+    transport: inboundTransport,
+  );
+  final SshInboundPacketChannel inboundChannel =
+      await inboundFactory.inboundChannels.first;
+  assert(inboundChannel.openRequest.type == SshChannelType.forwardedTcpip);
+  assert(inboundChannel.openRequest.payload['connectedPort'] == 2222);
+  final SshChannelOpenConfirmationMessage inboundConfirmation =
+      SshChannelOpenConfirmationMessage.decodePayload(
+    inboundTransport.writtenPayloads.first,
+  );
+  assert(inboundConfirmation.recipientChannel == 77);
+  await inboundChannel.channel.close();
+
+  final _ScriptedPacketTransport localTransport = _ScriptedPacketTransport(
+    scriptedPackets: <List<int>>[
+      SshChannelOpenConfirmationMessage(
+        recipientChannel: 0,
+        senderChannel: 500,
+        initialWindowSize: 1024 * 1024,
+        maximumPacketSize: 32768,
+      ).encodePayload(),
+      const SshChannelCloseMessage(recipientChannel: 0).encodePayload(),
+    ],
+  );
+  final SshPacketChannelFactory localFactory = SshPacketChannelFactory(
+    transport: localTransport,
+  );
+  final SshIoPortForwardingService localService = SshIoPortForwardingService(
+    transport: localTransport,
+    channelFactory: localFactory,
+  );
+  final SshPortForward localForward = await localService.openForward(
+    const SshForwardRequest.local(
+      bindHost: '127.0.0.1',
+      bindPort: 0,
+      target: SshForwardTarget(host: 'db.internal', port: 5432),
+    ),
+  );
+  final Socket localSocket = await Socket.connect(
+    localForward.bindHost,
+    localForward.bindPort,
+  );
+  await localSocket.close();
+  localSocket.destroy();
+  await Future<void>.delayed(const Duration(milliseconds: 50));
+  final SshChannelOpenMessage localOpen = SshChannelOpenMessage.decodePayload(
+    localTransport.writtenPayloads.first,
+  );
+  final SshDirectTcpIpChannelOpenData localOpenData =
+      SshDirectTcpIpChannelOpenData.fromChannelOpenMessage(localOpen);
+  assert(localOpenData.targetHost == 'db.internal');
+  assert(localOpenData.targetPort == 5432);
+  await localForward.close();
+
+  final _ScriptedPacketTransport dynamicTransport = _ScriptedPacketTransport(
+    scriptedPackets: <List<int>>[
+      SshChannelOpenConfirmationMessage(
+        recipientChannel: 0,
+        senderChannel: 700,
+        initialWindowSize: 1024 * 1024,
+        maximumPacketSize: 32768,
+      ).encodePayload(),
+      const SshChannelCloseMessage(recipientChannel: 0).encodePayload(),
+    ],
+  );
+  final SshPacketChannelFactory dynamicFactory = SshPacketChannelFactory(
+    transport: dynamicTransport,
+  );
+  final SshIoPortForwardingService dynamicService = SshIoPortForwardingService(
+    transport: dynamicTransport,
+    channelFactory: dynamicFactory,
+  );
+  final SshPortForward dynamicForward = await dynamicService.openForward(
+    const SshForwardRequest.dynamic(bindHost: '127.0.0.1', bindPort: 0),
+  );
+  final Socket dynamicSocket = await Socket.connect(
+    dynamicForward.bindHost,
+    dynamicForward.bindPort,
+  );
+  final StreamIterator<List<int>> dynamicIterator =
+      StreamIterator<List<int>>(dynamicSocket);
+  final List<int> dynamicBuffer = <int>[];
+  dynamicSocket.add(
+    SshSocks5Greeting(
+      methods: const <SshSocks5AuthMethod>[SshSocks5AuthMethod.noAuth],
+    ).encode(),
+  );
+  await dynamicSocket.flush();
+  final SshSocks5MethodSelection selection = SshSocks5MethodSelection.decode(
+    await _readSocketMessage(
+      dynamicIterator,
+      dynamicBuffer,
+      (List<int> buffer) => buffer.length >= 2 ? 2 : null,
+    ),
+  );
+  assert(selection.method == SshSocks5AuthMethod.noAuth);
+
+  dynamicSocket.add(
+    SshSocks5Request(
+      command: SshSocks5Command.connect,
+      destinationAddress: SshSocks5Address.domain('cache.internal'),
+      destinationPort: 8080,
+    ).encode(),
+  );
+  await dynamicSocket.flush();
+  final SshSocks5Reply dynamicReply = SshSocks5Reply.decode(
+    await _readSocketMessage(
+      dynamicIterator,
+      dynamicBuffer,
+      (List<int> buffer) {
+        if (buffer.length < 4) {
+          return null;
+        }
+        if (buffer[3] != SshSocks5AddressType.ipv4.code) {
+          throw const FormatException('Unexpected SOCKS5 bound address type.');
+        }
+        return 10;
+      },
+    ),
+  );
+  assert(dynamicReply.replyCode == SshSocks5ReplyCode.succeeded);
+  await dynamicIterator.cancel();
+  await dynamicSocket.close();
+  dynamicSocket.destroy();
+  await Future<void>.delayed(const Duration(milliseconds: 50));
+  final SshChannelOpenMessage dynamicOpen = SshChannelOpenMessage.decodePayload(
+    dynamicTransport.writtenPayloads.first,
+  );
+  final SshDirectTcpIpChannelOpenData dynamicOpenData =
+      SshDirectTcpIpChannelOpenData.fromChannelOpenMessage(dynamicOpen);
+  assert(dynamicOpenData.targetHost == 'cache.internal');
+  assert(dynamicOpenData.targetPort == 8080);
+  await dynamicForward.close();
+
+  final ServerSocket targetServer = await ServerSocket.bind(
+    InternetAddress.loopbackIPv4,
+    0,
+  );
+  final Future<Socket> acceptedRemoteConnection = targetServer.first;
+  final _ScriptedPacketTransport remoteTransport = _ScriptedPacketTransport(
+    scriptedPackets: <List<int>>[
+      SshForwardedTcpIpChannelOpenData(
+        connectedHost: '127.0.0.1',
+        connectedPort: 4040,
+        originatorHost: '10.0.0.8',
+        originatorPort: 55000,
+      ).toChannelOpenMessage(senderChannel: 90).encodePayload(),
+    ],
+  );
+  final SshPacketChannelFactory remoteFactory = SshPacketChannelFactory(
+    transport: remoteTransport,
+  );
+  final SshIoPortForwardingService remoteService = SshIoPortForwardingService(
+    transport: remoteTransport,
+    channelFactory: remoteFactory,
+  );
+  final SshPortForward remoteForward = await remoteService.openForward(
+    SshForwardRequest.remote(
+      bindHost: '127.0.0.1',
+      bindPort: 4040,
+      target: SshForwardTarget(
+        host: InternetAddress.loopbackIPv4.address,
+        port: targetServer.port,
+      ),
+    ),
+  );
+  final Socket remoteTargetSocket = await acceptedRemoteConnection.timeout(
+    const Duration(seconds: 2),
+  );
+  assert(
+    remoteTransport.sentGlobalRequests.single.type ==
+        sshTcpIpForwardRequestName,
+  );
+  final SshChannelOpenConfirmationMessage remoteConfirmation =
+      SshChannelOpenConfirmationMessage.decodePayload(
+    remoteTransport.writtenPayloads.first,
+  );
+  assert(remoteConfirmation.recipientChannel == 90);
+  await remoteTargetSocket.close();
+  remoteTargetSocket.destroy();
+  await remoteForward.close();
+  await targetServer.close();
+}
+
 Future<void> _exerciseSocks5Protocol() async {
   final SshSocks5Greeting greeting = SshSocks5Greeting(
     methods: const <SshSocks5AuthMethod>[
@@ -2132,6 +2329,27 @@ Future<SshBinaryPacket> _readPacketFromState(
     final bool hasNext = await iterator.moveNext();
     if (!hasNext) {
       throw StateError('Socket closed before a packet was received.');
+    }
+    buffer.addAll(iterator.current);
+  }
+}
+
+Future<List<int>> _readSocketMessage(
+  StreamIterator<List<int>> iterator,
+  List<int> buffer,
+  int? Function(List<int> buffer) expectedLength,
+) async {
+  for (;;) {
+    final int? length = expectedLength(buffer);
+    if (length != null && buffer.length >= length) {
+      final List<int> bytes = buffer.sublist(0, length);
+      buffer.removeRange(0, length);
+      return bytes;
+    }
+
+    final bool hasNext = await iterator.moveNext();
+    if (!hasNext) {
+      throw StateError('Socket closed before a full message was received.');
     }
     buffer.addAll(iterator.current);
   }

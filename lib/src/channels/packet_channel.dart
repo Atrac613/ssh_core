@@ -24,6 +24,16 @@ class SshPacketChannelOpenException implements Exception {
   }
 }
 
+class SshInboundPacketChannel {
+  const SshInboundPacketChannel({
+    required this.channel,
+    required this.openRequest,
+  });
+
+  final SshPacketChannel channel;
+  final SshChannelOpenRequest openRequest;
+}
+
 class SshPacketChannel implements SshChannel {
   SshPacketChannel._(this._factory, this._state);
 
@@ -136,8 +146,15 @@ class SshPacketChannelFactory implements SshChannelFactory {
 
   final SshPacketTransport _transport;
   final Map<int, _PacketChannelState> _channels = <int, _PacketChannelState>{};
+  final StreamController<SshInboundPacketChannel> _inboundChannelsController =
+      StreamController<SshInboundPacketChannel>.broadcast();
   int _nextLocalChannelId = 0;
   bool _readLoopStarted = false;
+
+  Stream<SshInboundPacketChannel> get inboundChannels {
+    _ensureReadLoop();
+    return _inboundChannelsController.stream;
+  }
 
   Future<SshPacketChannel> openSessionChannel({
     SshChannelWindow localWindow = const SshChannelWindow(),
@@ -196,12 +213,18 @@ class SshPacketChannelFactory implements SshChannelFactory {
         }
         state.finish(error: error, stackTrace: stackTrace);
       }
+      await _inboundChannelsController.close();
       _channels.clear();
     }
   }
 
   Future<void> _handlePacket(SshBinaryPacket packet) async {
     switch (packet.messageId) {
+      case 90:
+        await _handleInboundOpen(
+          SshChannelOpenMessage.decodePayload(packet.payload),
+        );
+        return;
       case 91:
         final SshChannelOpenConfirmationMessage confirmation =
             SshChannelOpenConfirmationMessage.decodePayload(packet.payload);
@@ -296,6 +319,33 @@ class SshPacketChannelFactory implements SshChannelFactory {
     }
   }
 
+  Future<void> _handleInboundOpen(SshChannelOpenMessage message) async {
+    final int localChannelId = _nextLocalChannelId++;
+    final SshChannelOpenRequest request = _decodeOpenRequest(message);
+    final _PacketChannelState state = _PacketChannelState(
+      localChannelId: localChannelId,
+      type: request.type,
+    );
+    state.remoteChannelId = message.senderChannel;
+    final SshPacketChannel channel = SshPacketChannel._(this, state);
+    state.channel = channel;
+    _channels[localChannelId] = state;
+
+    await _transport.writePacket(
+      SshChannelOpenConfirmationMessage(
+        recipientChannel: message.senderChannel,
+        senderChannel: localChannelId,
+        initialWindowSize: request.localWindow.initialSize,
+        maximumPacketSize: request.localWindow.maxPacketSize,
+      ).encodePayload(),
+    );
+
+    state.openCompleter.complete(channel);
+    _inboundChannelsController.add(
+      SshInboundPacketChannel(channel: channel, openRequest: request),
+    );
+  }
+
   _EncodedChannelOpen _encodeOpenRequest(SshChannelOpenRequest request) {
     switch (request.type) {
       case SshChannelType.session:
@@ -340,6 +390,62 @@ class SshPacketChannelFactory implements SshChannelFactory {
         return _EncodedChannelOpen(
           channelType: channelType,
           channelData: rawChannelData,
+        );
+    }
+  }
+
+  SshChannelOpenRequest _decodeOpenRequest(SshChannelOpenMessage message) {
+    switch (message.channelType) {
+      case 'session':
+        return SshChannelOpenRequest.session(
+          localWindow: SshChannelWindow(
+            initialSize: message.initialWindowSize,
+            maxPacketSize: message.maximumPacketSize,
+          ),
+        );
+      case sshDirectTcpIpChannelType:
+        final SshDirectTcpIpChannelOpenData data =
+            SshDirectTcpIpChannelOpenData.fromChannelOpenMessage(message);
+        return SshChannelOpenRequest(
+          type: SshChannelType.directTcpip,
+          localWindow: SshChannelWindow(
+            initialSize: message.initialWindowSize,
+            maxPacketSize: message.maximumPacketSize,
+          ),
+          payload: <String, Object?>{
+            'targetHost': data.targetHost,
+            'targetPort': data.targetPort,
+            'originatorHost': data.originatorHost,
+            'originatorPort': data.originatorPort,
+          },
+        );
+      case sshForwardedTcpIpChannelType:
+        final SshForwardedTcpIpChannelOpenData data =
+            SshForwardedTcpIpChannelOpenData.fromChannelOpenMessage(message);
+        return SshChannelOpenRequest(
+          type: SshChannelType.forwardedTcpip,
+          localWindow: SshChannelWindow(
+            initialSize: message.initialWindowSize,
+            maxPacketSize: message.maximumPacketSize,
+          ),
+          payload: <String, Object?>{
+            'connectedHost': data.connectedHost,
+            'connectedPort': data.connectedPort,
+            'originatorHost': data.originatorHost,
+            'originatorPort': data.originatorPort,
+          },
+        );
+      default:
+        return SshChannelOpenRequest(
+          type: SshChannelType.custom,
+          subtype: message.channelType,
+          localWindow: SshChannelWindow(
+            initialSize: message.initialWindowSize,
+            maxPacketSize: message.maximumPacketSize,
+          ),
+          payload: <String, Object?>{
+            'channelData': message.channelData,
+          },
         );
     }
   }
