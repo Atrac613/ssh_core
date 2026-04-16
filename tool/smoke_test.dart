@@ -7,6 +7,7 @@ import 'package:ssh_core/ssh_core_io.dart';
 
 Future<void> main() async {
   await _exerciseTransportPrimitives();
+  await _exerciseAuthProtocol();
   await _exerciseHostKeyVerification();
   await _exerciseSocketTransport();
 
@@ -328,6 +329,103 @@ Future<void> _exerciseTransportPrimitives() async {
   assert(negotiatedAlgorithms.languageServerToClient == null);
   assert(negotiatedAlgorithms.ignoreGuessedClientPacket == false);
   assert(negotiatedAlgorithms.ignoreGuessedServerPacket);
+}
+
+Future<void> _exerciseAuthProtocol() async {
+  final SshServiceRequestMessage serviceRequest = SshServiceRequestMessage(
+    serviceName: sshUserauthService,
+  );
+  final SshServiceRequestMessage decodedServiceRequest =
+      SshServiceRequestMessage.decodePayload(serviceRequest.encodePayload());
+  assert(decodedServiceRequest.serviceName == sshUserauthService);
+
+  final SshServiceAcceptMessage serviceAccept = SshServiceAcceptMessage(
+    serviceName: sshUserauthService,
+  );
+  final SshServiceAcceptMessage decodedServiceAccept =
+      SshServiceAcceptMessage.decodePayload(serviceAccept.encodePayload());
+  assert(decodedServiceAccept.serviceName == sshUserauthService);
+
+  final SshUserAuthRequestMessage noneRequest =
+      SshUserAuthRequestMessage.none(username: 'tester');
+  final SshUserAuthRequestMessage decodedNoneRequest =
+      SshUserAuthRequestMessage.decodePayload(noneRequest.encodePayload());
+  assert(decodedNoneRequest.username == 'tester');
+  assert(decodedNoneRequest.methodName == 'none');
+  assert(decodedNoneRequest.methodPayload.isEmpty);
+
+  final SshUserAuthRequestMessage passwordRequest =
+      SshUserAuthRequestMessage.password(
+    username: 'tester',
+    password: 'pw',
+  );
+  final SshUserAuthRequestMessage decodedPasswordRequest =
+      SshUserAuthRequestMessage.decodePayload(passwordRequest.encodePayload());
+  assert(decodedPasswordRequest.methodName == 'password');
+  final SshPayloadReader passwordReader = SshPayloadReader(
+    decodedPasswordRequest.methodPayload,
+  );
+  final bool passwordChangeRequested = passwordReader.readBool();
+  final String passwordValue = passwordReader.readString();
+  assert(passwordChangeRequested == false);
+  assert(passwordValue == 'pw');
+  passwordReader.expectDone();
+
+  final SshUserAuthFailureMessage failure = SshUserAuthFailureMessage(
+    allowedMethods: const <String>['password', 'publickey'],
+  );
+  final SshUserAuthFailureMessage decodedFailure =
+      SshUserAuthFailureMessage.decodePayload(failure.encodePayload());
+  assert(decodedFailure.allowedMethods.length == 2);
+  assert(decodedFailure.allowedMethods.first == 'password');
+  assert(decodedFailure.partialSuccess == false);
+
+  final SshUserAuthSuccessMessage success = const SshUserAuthSuccessMessage();
+  final SshUserAuthSuccessMessage decodedSuccess =
+      SshUserAuthSuccessMessage.decodePayload(success.encodePayload());
+  assert(
+    decodedSuccess.encodePayload().single == SshMessageId.userauthSuccess.value,
+  );
+
+  final SshUserAuthBannerMessage banner = SshUserAuthBannerMessage(
+    message: 'Authorized access only',
+    languageTag: 'en-US',
+  );
+  final SshUserAuthBannerMessage decodedBanner =
+      SshUserAuthBannerMessage.decodePayload(banner.encodePayload());
+  assert(decodedBanner.message == 'Authorized access only');
+  assert(decodedBanner.languageTag == 'en-US');
+
+  final SshUserAuthPkOkMessage pkOk = SshUserAuthPkOkMessage(
+    algorithm: 'ssh-ed25519',
+    publicKey: const <int>[1, 2, 3],
+  );
+  final SshUserAuthPkOkMessage decodedPkOk =
+      SshUserAuthPkOkMessage.decodePayload(pkOk.encodePayload());
+  assert(decodedPkOk.algorithm == 'ssh-ed25519');
+  assert(_sameBytes(decodedPkOk.publicKey, pkOk.publicKey));
+
+  final SshUserAuthInfoRequestMessage infoRequest =
+      SshUserAuthInfoRequestMessage(
+    name: 'Verification',
+    instruction: 'Enter the one-time code.',
+    prompts: const <SshKeyboardInteractivePrompt>[
+      SshKeyboardInteractivePrompt(prompt: 'Code: ', echo: false),
+    ],
+  );
+  final SshUserAuthInfoRequestMessage decodedInfoRequest =
+      SshUserAuthInfoRequestMessage.decodePayload(infoRequest.encodePayload());
+  assert(decodedInfoRequest.name == 'Verification');
+  assert(decodedInfoRequest.prompts.single.prompt == 'Code: ');
+  assert(decodedInfoRequest.prompts.single.echo == false);
+
+  final SshUserAuthInfoResponseMessage infoResponse =
+      SshUserAuthInfoResponseMessage(responses: const <String>['123456']);
+  final SshUserAuthInfoResponseMessage decodedInfoResponse =
+      SshUserAuthInfoResponseMessage.decodePayload(
+    infoResponse.encodePayload(),
+  );
+  assert(decodedInfoResponse.responses.single == '123456');
 }
 
 Future<void> _exerciseHostKeyVerification() async {

@@ -15,6 +15,7 @@ Implemented in this scaffold:
 
 - `SshClient` orchestration and connection state management
 - transport, auth, channel, session, PTY, exec, SFTP, and forwarding contracts
+- auth service and userauth packet helpers for protocol flows
 - transport payload/message codec and `SSH_MSG_KEXINIT` helper
 - transport algorithm negotiation for client/server `KEXINIT` proposals
 - host key parsing and verifier contracts for the pre-auth handshake
@@ -36,7 +37,7 @@ Not implemented yet:
 ## Public modules
 
 - `transport`: socket lifecycle, handshake metadata, and global requests
-- `auth`: authentication strategies and auth results
+- `auth`: authentication strategies, auth results, and userauth packet helpers
 - `channels`: generic channel open/request lifecycle
 - `sessions`: shell/session abstractions
 - `pty`: terminal allocation and resize metadata

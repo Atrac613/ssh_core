@@ -13,6 +13,10 @@ enum SshMessageId {
   userauthRequest(50),
   userauthFailure(51),
   userauthSuccess(52),
+  userauthBanner(53),
+  userauthPkOk(60),
+  userauthInfoRequest(60),
+  userauthInfoResponse(61),
   channelOpen(90),
   channelData(94),
   channelClose(97);
