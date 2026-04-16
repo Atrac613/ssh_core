@@ -11,6 +11,7 @@ Future<void> main() async {
   await _exerciseAuthProtocol();
   await _exerciseProtocolAuthenticator();
   await _exerciseChannelProtocol();
+  await _exercisePacketChannels();
   await _exerciseSessionProtocol();
   await _exerciseSftpProtocol();
   await _exerciseForwardingProtocol();
@@ -781,6 +782,77 @@ Future<void> _exerciseChannelProtocol() async {
   final SshChannelCloseMessage decodedClose =
       SshChannelCloseMessage.decodePayload(close.encodePayload());
   assert(decodedClose.recipientChannel == 1);
+}
+
+Future<void> _exercisePacketChannels() async {
+  final _ScriptedPacketTransport transport = _ScriptedPacketTransport(
+    scriptedPackets: <List<int>>[
+      SshChannelOpenConfirmationMessage(
+        recipientChannel: 0,
+        senderChannel: 41,
+        initialWindowSize: 65536,
+        maximumPacketSize: 32768,
+      ).encodePayload(),
+      const SshChannelSuccessMessage(recipientChannel: 0).encodePayload(),
+      SshChannelDataMessage(
+        recipientChannel: 0,
+        data: utf8.encode('hello'),
+      ).encodePayload(),
+      SshChannelExtendedDataMessage(
+        recipientChannel: 0,
+        dataTypeCode: 1,
+        data: utf8.encode('warn'),
+      ).encodePayload(),
+      SshChannelRequestMessage(
+        recipientChannel: 0,
+        requestType: 'exit-status',
+        requestData: const SshExitStatusChannelRequest(exitStatus: 23).encode(),
+      ).encodePayload(),
+      const SshChannelEofMessage(recipientChannel: 0).encodePayload(),
+      const SshChannelCloseMessage(recipientChannel: 0).encodePayload(),
+    ],
+  );
+  final SshPacketChannelFactory factory = SshPacketChannelFactory(
+    transport: transport,
+  );
+  final SshPacketChannel channel = await factory.openSessionChannel();
+  assert(channel.id == 0);
+  assert(channel.type == SshChannelType.session);
+
+  await channel.sendRequest(
+    SshChannelRequest(
+      type: 'exec',
+      wantReply: true,
+      payload: <String, Object?>{
+        'encodedPayload': const SshExecChannelRequest(command: 'true').encode(),
+      },
+    ),
+  );
+
+  final List<int> stdoutData = await channel.stdout.first;
+  final List<int> stderrData = await channel.stderr.first;
+  final SshChannelRequestMessage inboundRequest =
+      await channel.inboundRequests.first;
+  await channel.done;
+
+  assert(utf8.decode(stdoutData) == 'hello');
+  assert(utf8.decode(stderrData) == 'warn');
+  assert(inboundRequest.requestType == 'exit-status');
+  final SshExitStatusChannelRequest exitStatus =
+      SshExitStatusChannelRequest.decode(inboundRequest.requestData);
+  assert(exitStatus.exitStatus == 23);
+
+  assert(transport.writtenPayloads.length == 3);
+  final SshChannelOpenMessage openMessage = SshChannelOpenMessage.decodePayload(
+    transport.writtenPayloads[0],
+  );
+  assert(openMessage.channelType == 'session');
+  final SshChannelRequestMessage requestMessage =
+      SshChannelRequestMessage.decodePayload(transport.writtenPayloads[1]);
+  assert(requestMessage.requestType == 'exec');
+  final SshChannelCloseMessage closeMessage =
+      SshChannelCloseMessage.decodePayload(transport.writtenPayloads[2]);
+  assert(closeMessage.recipientChannel == 41);
 }
 
 Future<void> _exerciseSessionProtocol() async {
