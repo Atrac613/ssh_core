@@ -36,7 +36,8 @@ Implemented in this scaffold:
 - `SSH_MSG_NEWKEYS` helper for the end of key exchange
 - transport banner parsing/exchange helpers and binary packet framing helpers
 - secure socket transport with Curve25519 key exchange, Ed25519 host-key
-  verification, `aes*-ctr` packet encryption, and `hmac-sha2-256`
+  verification, RSA/ECDSA host-key verification, `aes*-ctr` packet
+  encryption, and `hmac-sha2-256` / `hmac-sha2-512`
 - `SshIoClientFactory` for wiring a live `SshClient` with protocol services
 - a smoke test that exercises the package with fake implementations
 - example wiring showing how a concrete implementation can plug into the stack
@@ -45,7 +46,8 @@ Not implemented yet:
 
 - rekeying after the initial key exchange
 - compression algorithms other than `none`
-- broader host-key, cipher, and MAC algorithm coverage
+- broader host-key curves, ciphers, and MACs beyond the current
+  Ed25519/RSA/ECDSA + AES-CTR + HMAC-SHA2 set
 - remote forwarding with auto-assigned remote ports and advanced forwarding
   variants
 

@@ -3,10 +3,12 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:pinenacl/ed25519.dart';
+import 'package:pointycastle/export.dart' as pc hide Signature;
 import 'package:ssh_core/ssh_core_io.dart';
 
 Future<void> main() async {
   await _exerciseTransportPrimitives();
+  await _exerciseTransportAlgorithmCoverage();
   await _exerciseGlobalRequestProtocol();
   await _exerciseAuthProtocol();
   await _exerciseProtocolAuthenticator();
@@ -594,6 +596,99 @@ Future<void> _exerciseGlobalRequestProtocol() async {
       SshRequestFailureMessage.decodePayload(failure.encodePayload());
   assert(decodedFailure.encodePayload().single ==
       SshMessageId.requestFailure.value);
+}
+
+Future<void> _exerciseTransportAlgorithmCoverage() async {
+  assert(sshCipherKeyLength(sshAes192CtrCipher) == 24);
+  assert(sshMacKeyLength(sshHmacSha512Mac) == 64);
+
+  final Uint8List exchangeHash = Uint8List.fromList(
+    List<int>.generate(32, (int index) => index + 1),
+  );
+
+  final _GeneratedRsaKeyPair rsaKeyPair = _generateRsaKeyPair();
+  final SshHostKey rsaHostKey = SshHostKey.decode(
+    (SshPayloadWriter()
+          ..writeString(sshRsaHostKeyType)
+          ..writeMpInt(rsaKeyPair.publicKey.exponent!)
+          ..writeMpInt(rsaKeyPair.publicKey.modulus!))
+        .toBytes(),
+  );
+  final pc.RSASigner rsaSigner = pc.RSASigner(
+    pc.SHA256Digest(),
+    '0609608648016503040201',
+  )..init(
+      true,
+      pc.PrivateKeyParameter<pc.RSAPrivateKey>(rsaKeyPair.privateKey),
+    );
+  final pc.RSASignature rsaSignatureValue =
+      rsaSigner.generateSignature(exchangeHash);
+  final SshSignature rsaSignature = SshSignature(
+    algorithm: sshRsaSha256HostKeyAlgorithm,
+    blob: rsaSignatureValue.bytes,
+  );
+  assert(
+    const SshHostKeySignatureVerifier().verifyExchangeHash(
+      hostKey: rsaHostKey,
+      signature: rsaSignature,
+      exchangeHash: exchangeHash,
+      negotiatedHostKeyAlgorithm: sshRsaSha256HostKeyAlgorithm,
+    ),
+  );
+
+  final _GeneratedEcdsaKeyPair ecdsaKeyPair = _generateEcdsaKeyPair();
+  final SshHostKey ecdsaHostKey = SshHostKey.decode(
+    (SshPayloadWriter()
+          ..writeString(sshEcdsaSha2Nistp256HostKeyAlgorithm)
+          ..writeString('nistp256')
+          ..writeStringBytes(ecdsaKeyPair.publicKey.Q!.getEncoded(false)))
+        .toBytes(),
+  );
+  final pc.ECDSASigner ecdsaSigner =
+      pc.Signer('SHA-256/DET-ECDSA') as pc.ECDSASigner
+        ..init(
+          true,
+          pc.PrivateKeyParameter<pc.ECPrivateKey>(ecdsaKeyPair.privateKey),
+        );
+  final pc.ECSignature ecdsaSignatureValue =
+      ecdsaSigner.generateSignature(exchangeHash) as pc.ECSignature;
+  final SshSignature ecdsaSignature = SshSignature(
+    algorithm: sshEcdsaSha2Nistp256HostKeyAlgorithm,
+    blob: (SshPayloadWriter()
+          ..writeMpInt(ecdsaSignatureValue.r)
+          ..writeMpInt(ecdsaSignatureValue.s))
+        .toBytes(),
+  );
+  assert(
+    const SshHostKeySignatureVerifier().verifyExchangeHash(
+      hostKey: ecdsaHostKey,
+      signature: ecdsaSignature,
+      exchangeHash: exchangeHash,
+      negotiatedHostKeyAlgorithm: sshEcdsaSha2Nistp256HostKeyAlgorithm,
+    ),
+  );
+
+  final SshAesCtrHmacPacketWriterState protectedWriter =
+      SshAesCtrHmacPacketWriterState(
+    encryptionKey: List<int>.generate(24, (int index) => index + 1),
+    initialVector: List<int>.generate(16, (int index) => 16 - index),
+    macKey: List<int>.generate(64, (int index) => 255 - index),
+    macAlgorithm: sshHmacSha512Mac,
+  );
+  final SshAesCtrHmacPacketReaderState protectedReader =
+      SshAesCtrHmacPacketReaderState(
+    encryptionKey: List<int>.generate(24, (int index) => index + 1),
+    initialVector: List<int>.generate(16, (int index) => 16 - index),
+    macKey: List<int>.generate(64, (int index) => 255 - index),
+    macAlgorithm: sshHmacSha512Mac,
+  );
+  final Uint8List protectedPacket = protectedWriter.encode(
+    <int>[SshMessageId.ignore.value, 1, 2, 3, 4],
+  );
+  final SshBinaryPacket? decodedPacket =
+      protectedReader.tryRead(protectedPacket);
+  assert(decodedPacket != null);
+  assert(decodedPacket!.messageId == SshMessageId.ignore.value);
 }
 
 Future<void> _exerciseProtocolAuthenticator() async {
@@ -2399,6 +2494,71 @@ class _ScriptedPacketTransport implements SshPacketTransport {
   Future<void> writePacket(List<int> payload) async {
     writtenPayloads.add(List<int>.from(payload));
   }
+}
+
+class _GeneratedRsaKeyPair {
+  const _GeneratedRsaKeyPair({
+    required this.publicKey,
+    required this.privateKey,
+  });
+
+  final pc.RSAPublicKey publicKey;
+  final pc.RSAPrivateKey privateKey;
+}
+
+class _GeneratedEcdsaKeyPair {
+  const _GeneratedEcdsaKeyPair({
+    required this.publicKey,
+    required this.privateKey,
+  });
+
+  final pc.ECPublicKey publicKey;
+  final pc.ECPrivateKey privateKey;
+}
+
+_GeneratedRsaKeyPair _generateRsaKeyPair() {
+  final pc.FortunaRandom random = _seededRandom(
+    List<int>.generate(32, (int index) => index + 1),
+  );
+  final pc.RSAKeyGenerator generator = pc.RSAKeyGenerator()
+    ..init(
+      pc.ParametersWithRandom<pc.RSAKeyGeneratorParameters>(
+        pc.RSAKeyGeneratorParameters(BigInt.from(65537), 1024, 64),
+        random,
+      ),
+    );
+  final pc.AsymmetricKeyPair<pc.PublicKey, pc.PrivateKey> pair =
+      generator.generateKeyPair();
+  return _GeneratedRsaKeyPair(
+    publicKey: pair.publicKey as pc.RSAPublicKey,
+    privateKey: pair.privateKey as pc.RSAPrivateKey,
+  );
+}
+
+_GeneratedEcdsaKeyPair _generateEcdsaKeyPair() {
+  final pc.ECDomainParameters curve = pc.ECCurve_secp256r1();
+  final pc.FortunaRandom random = _seededRandom(
+    List<int>.generate(32, (int index) => 32 - index),
+  );
+  final pc.ECKeyGenerator generator = pc.ECKeyGenerator()
+    ..init(
+      pc.ParametersWithRandom<pc.ECKeyGeneratorParameters>(
+        pc.ECKeyGeneratorParameters(curve),
+        random,
+      ),
+    );
+  final pc.AsymmetricKeyPair<pc.PublicKey, pc.PrivateKey> pair =
+      generator.generateKeyPair();
+  return _GeneratedEcdsaKeyPair(
+    publicKey: pair.publicKey as pc.ECPublicKey,
+    privateKey: pair.privateKey as pc.ECPrivateKey,
+  );
+}
+
+pc.FortunaRandom _seededRandom(List<int> seedBytes) {
+  final pc.FortunaRandom random = pc.FortunaRandom();
+  random.seed(pc.KeyParameter(Uint8List.fromList(seedBytes)));
+  return random;
 }
 
 SshHostKey _testHostKey() {

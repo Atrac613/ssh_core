@@ -22,12 +22,19 @@ class SshSecureSocketTransport implements SshPacketTransport {
     ],
     List<String> serverHostKeyAlgorithms = const <String>[
       sshEd25519HostKeyAlgorithm,
+      sshEcdsaSha2Nistp256HostKeyAlgorithm,
+      sshRsaSha512HostKeyAlgorithm,
+      sshRsaSha256HostKeyAlgorithm,
     ],
     List<String> encryptionAlgorithms = const <String>[
       sshAes256CtrCipher,
+      sshAes192CtrCipher,
       sshAes128CtrCipher,
     ],
-    List<String> macAlgorithms = const <String>[sshHmacSha256Mac],
+    List<String> macAlgorithms = const <String>[
+      sshHmacSha512Mac,
+      sshHmacSha256Mac,
+    ],
     List<String> compressionAlgorithms = const <String>[sshNoCompression],
   })  : _random = random ?? Random.secure(),
         keyExchangeAlgorithms = List.unmodifiable(keyExchangeAlgorithms),
@@ -239,6 +246,7 @@ class SshSecureSocketTransport implements SshPacketTransport {
       hostKey: reply.hostKey,
       signature: reply.decodedExchangeHashSignature,
       exchangeHash: exchangeHash,
+      negotiatedHostKeyAlgorithm: negotiatedAlgorithms.serverHostKey,
     );
     if (!signatureVerified) {
       throw const SshTransportCryptoException(
@@ -293,6 +301,7 @@ class SshSecureSocketTransport implements SshPacketTransport {
         0,
         clientMacKeyLength,
       ),
+      macAlgorithm: negotiatedAlgorithms.macClientToServer,
       codec: SshPacketCodec(blockSize: clientIvLength),
     );
     _readerState = SshAesCtrHmacPacketReaderState(
@@ -346,10 +355,17 @@ class SshSecureSocketTransport implements SshPacketTransport {
         );
     }
 
-    if (negotiated.serverHostKey != sshEd25519HostKeyAlgorithm) {
-      throw SshTransportCryptoException(
-        'Unsupported SSH host key algorithm: ${negotiated.serverHostKey}.',
-      );
+    switch (negotiated.serverHostKey) {
+      case sshEd25519HostKeyAlgorithm:
+      case sshRsaHostKeyType:
+      case sshRsaSha256HostKeyAlgorithm:
+      case sshRsaSha512HostKeyAlgorithm:
+      case sshEcdsaSha2Nistp256HostKeyAlgorithm:
+        break;
+      default:
+        throw SshTransportCryptoException(
+          'Unsupported SSH host key algorithm: ${negotiated.serverHostKey}.',
+        );
     }
 
     sshCipherKeyLength(negotiated.encryptionClientToServer);

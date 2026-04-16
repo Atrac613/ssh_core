@@ -57,6 +57,7 @@ class SshAesCtrHmacPacketWriterState implements SshPacketWriterState {
     required List<int> encryptionKey,
     required List<int> initialVector,
     required List<int> macKey,
+    this.macAlgorithm = sshHmacSha256Mac,
     SshPacketCodec? codec,
   })  : _cipher = _SshAesCtrCipher(
           key: encryptionKey,
@@ -70,6 +71,7 @@ class SshAesCtrHmacPacketWriterState implements SshPacketWriterState {
 
   final _SshAesCtrCipher _cipher;
   final Uint8List _macKey;
+  final String macAlgorithm;
   final SshPacketCodec _codec;
   int _sequenceNumber = 0;
 
@@ -78,6 +80,7 @@ class SshAesCtrHmacPacketWriterState implements SshPacketWriterState {
     final Uint8List plainPacket = _codec.encode(payload);
     final Uint8List mac = _computeMac(
       macKey: _macKey,
+      macAlgorithm: macAlgorithm,
       sequenceNumber: _sequenceNumber,
       packetBytes: plainPacket,
     );
@@ -99,6 +102,7 @@ class SshAesCtrHmacPacketReaderState implements SshPacketReaderState {
           initialCounter: initialVector,
         ),
         _macKey = Uint8List.fromList(macKey),
+        _macAlgorithm = macAlgorithm,
         _macLength = sshMacLength(macAlgorithm),
         _codec = codec ??
             SshPacketCodec(
@@ -107,6 +111,7 @@ class SshAesCtrHmacPacketReaderState implements SshPacketReaderState {
 
   final _SshAesCtrCipher _cipher;
   final Uint8List _macKey;
+  final String _macAlgorithm;
   final int _macLength;
   final SshPacketCodec _codec;
   int _sequenceNumber = 0;
@@ -142,6 +147,7 @@ class SshAesCtrHmacPacketReaderState implements SshPacketReaderState {
     final Uint8List plainPacket = _cipher.transform(encryptedPacket);
     final Uint8List expectedMac = _computeMac(
       macKey: _macKey,
+      macAlgorithm: _macAlgorithm,
       sequenceNumber: _sequenceNumber,
       packetBytes: plainPacket,
     );
@@ -216,6 +222,7 @@ class _SshAesCtrCipher {
 
 Uint8List _computeMac({
   required List<int> macKey,
+  required String macAlgorithm,
   required int sequenceNumber,
   required List<int> packetBytes,
 }) {
@@ -224,7 +231,16 @@ Uint8List _computeMac({
     ...sequenceData.buffer.asUint8List(),
     ...packetBytes,
   ]);
-  return Uint8List.fromList(Hmac(sha256, macKey).convert(macInput).bytes);
+  switch (macAlgorithm) {
+    case sshHmacSha256Mac:
+      return Uint8List.fromList(Hmac(sha256, macKey).convert(macInput).bytes);
+    case sshHmacSha512Mac:
+      return Uint8List.fromList(Hmac(sha512, macKey).convert(macInput).bytes);
+  }
+
+  throw SshTransportCryptoException(
+    'Unsupported SSH MAC algorithm: $macAlgorithm.',
+  );
 }
 
 void _incrementCounter(Uint8List counter) {
