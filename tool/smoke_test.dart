@@ -1,10 +1,13 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:ssh_core/ssh_core.dart';
+import 'package:ssh_core/ssh_core_io.dart';
 
 Future<void> main() async {
   await _exerciseTransportPrimitives();
+  await _exerciseSocketTransport();
 
   final client = SshClient(
     config: const SshClientConfig(host: 'localhost', username: 'tester'),
@@ -133,6 +136,81 @@ Future<void> _exerciseTransportPrimitives() async {
   assert(streamedPacket.payload.length == 4);
   assert(transportStream.pendingByteCount == 0);
   await transportStream.close();
+}
+
+Future<void> _exerciseSocketTransport() async {
+  final SshPacketCodec codec = SshPacketCodec(
+    paddingBytesFactory: (int length) =>
+        List<int>.generate(length, (int i) => i + 10),
+  );
+  final ServerSocket server = await ServerSocket.bind(
+    InternetAddress.loopbackIPv4,
+    0,
+  );
+
+  final Future<void> serverTask = () async {
+    final Socket socket = await server.first;
+    final StreamIterator<List<int>> iterator =
+        StreamIterator<List<int>>(socket);
+    final SshTransportBuffer serverBuffer = SshTransportBuffer(
+      packetCodec: codec,
+    );
+
+    try {
+      String? clientBanner;
+      while (clientBanner == null) {
+        final bool hasNext = await iterator.moveNext();
+        assert(hasNext);
+        serverBuffer.add(iterator.current);
+        clientBanner = serverBuffer.readLine();
+      }
+
+      assert(clientBanner == 'SSH-2.0-ssh_core-socket-test');
+
+      socket.add(
+        utf8.encode('server prelude\r\nSSH-2.0-ssh_core-test-server\r\n'),
+      );
+      await socket.flush();
+
+      SshBinaryPacket? packet;
+      while (packet == null) {
+        final bool hasNext = await iterator.moveNext();
+        assert(hasNext);
+        serverBuffer.add(iterator.current);
+        packet = serverBuffer.readPacket();
+      }
+
+      assert(utf8.decode(packet.payload) == 'ping');
+
+      socket.add(codec.encode(utf8.encode('pong')));
+      await socket.flush();
+      await socket.close();
+      socket.destroy();
+    } finally {
+      await iterator.cancel();
+    }
+  }();
+
+  final SshSocketTransport transport = SshSocketTransport(
+    packetCodec: codec,
+  );
+  final SshHandshakeInfo handshake = await transport.connect(
+    endpoint: SshEndpoint(
+        host: InternetAddress.loopbackIPv4.address, port: server.port),
+    settings: const SshTransportSettings(
+      clientIdentification: 'SSH-2.0-ssh_core-socket-test',
+    ),
+  );
+
+  assert(handshake.remoteIdentification == 'SSH-2.0-ssh_core-test-server');
+
+  await transport.writePacket(utf8.encode('ping'));
+  final SshBinaryPacket reply = await transport.readPacket();
+  assert(utf8.decode(reply.payload) == 'pong');
+
+  await transport.disconnect();
+  await serverTask;
+  await server.close();
 }
 
 class _FakeTransport implements SshTransport {

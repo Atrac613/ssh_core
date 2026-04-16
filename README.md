@@ -78,6 +78,7 @@ handshake steps:
 - `SshTransportBanner` and `SshBannerExchange` for SSH identification strings
 - `SshTransportBuffer` for mixed line and packet reads from one byte stream
 - `SshTransportStream` for async banner and packet I/O over byte streams
+- `SshSocketTransport` in `package:ssh_core/ssh_core_io.dart`
 - `SshLineReader` for chunked banner line parsing from socket bytes
 - `SshPacketCodec` for SSH binary packet framing
 - `SshPacketReader` for reading framed packets from chunked byte streams
@@ -85,6 +86,10 @@ handshake steps:
 These helpers intentionally stop short of encryption, MAC verification, and
 socket ownership. They are meant to be reused by a future concrete transport
 implementation.
+
+For `dart:io` environments, `package:ssh_core/ssh_core_io.dart` exposes a
+socket-backed transport that performs the SSH identification exchange and keeps
+the connection ready for packet-level reads and writes.
 
 ## Suggested implementation order
 
