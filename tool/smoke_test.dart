@@ -25,7 +25,8 @@ Future<void> main() async {
   await _exerciseSocks5Protocol();
   await _exerciseHostKeyVerification();
   await _exerciseSocketTransport();
-  await _exerciseSecureSocketTransport();
+  await _exerciseSecureSocketTransport(sshAes128CtrCipher);
+  await _exerciseSecureSocketTransport(sshChaCha20Poly1305OpenSshCipher);
   await _exerciseSecureSocketTransportCompression(sshZlibCompression);
   await _exerciseSecureSocketTransportCompression(sshZlibOpenSshCompression);
 
@@ -2143,7 +2144,7 @@ Future<void> _exerciseSocketTransport() async {
   await server.close();
 }
 
-Future<void> _exerciseSecureSocketTransport() async {
+Future<void> _exerciseSecureSocketTransport(String encryptionAlgorithm) async {
   final SigningKey hostSigningKey = SigningKey.generate();
   final SshHostKey trustedHostKey = SshHostKey.decode(
     (SshPayloadWriter()
@@ -2181,8 +2182,8 @@ Future<void> _exerciseSecureSocketTransport() async {
         cookie: List<int>.generate(16, (int index) => index + 1),
         kexAlgorithms: const <String>[sshCurve25519Sha256],
         serverHostKeyAlgorithms: const <String>[sshEd25519HostKeyAlgorithm],
-        encryptionAlgorithmsClientToServer: const <String>[sshAes128CtrCipher],
-        encryptionAlgorithmsServerToClient: const <String>[sshAes128CtrCipher],
+        encryptionAlgorithmsClientToServer: <String>[encryptionAlgorithm],
+        encryptionAlgorithmsServerToClient: <String>[encryptionAlgorithm],
         macAlgorithmsClientToServer: const <String>[sshHmacSha256Mac],
         macAlgorithmsServerToClient: const <String>[sshHmacSha256Mac],
         compressionAlgorithmsClientToServer: const <String>[sshNoCompression],
@@ -2235,26 +2236,39 @@ Future<void> _exerciseSecureSocketTransport() async {
             .payload,
       );
 
+      final SshCipherAlgorithm cipher =
+          SshTransportAlgorithms.cipherAlgorithm(encryptionAlgorithm);
+      final int integrityKeyLength =
+          cipher.macEmbedded ? 0 : sshMacKeyLength(sshHmacSha256Mac);
       final SshDerivedKeys derivedKeys = const SshKeyDerivation().deriveSha256(
         context: SshKeyDerivationContext(
           sharedSecret: sharedSecret,
           exchangeHash: exchangeHash,
           sessionIdentifier: exchangeHash,
         ),
-        ivLength: 16,
-        encryptionKeyLength: 16,
-        integrityKeyLength: 32,
+        ivLength: cipher.ivLength,
+        encryptionKeyLength: cipher.keyLength,
+        integrityKeyLength: integrityKeyLength,
       );
-      protectedReader = SshAesCtrHmacPacketReaderState(
-        encryptionKey: derivedKeys.encryptionKeyClientToServer,
-        initialVector: derivedKeys.initialIvClientToServer,
-        macKey: derivedKeys.integrityKeyClientToServer,
+      protectedReader = sshCreatePacketReaderState(
+        encryptionAlgorithm: encryptionAlgorithm,
+        encryptionKey: derivedKeys.encryptionKeyClientToServer
+            .sublist(0, cipher.keyLength),
+        initialVector:
+            derivedKeys.initialIvClientToServer.sublist(0, cipher.ivLength),
+        macKey: derivedKeys.integrityKeyClientToServer
+            .sublist(0, integrityKeyLength),
         macAlgorithm: sshHmacSha256Mac,
       );
-      protectedWriter = SshAesCtrHmacPacketWriterState(
-        encryptionKey: derivedKeys.encryptionKeyServerToClient,
-        initialVector: derivedKeys.initialIvServerToClient,
-        macKey: derivedKeys.integrityKeyServerToClient,
+      protectedWriter = sshCreatePacketWriterState(
+        encryptionAlgorithm: encryptionAlgorithm,
+        encryptionKey: derivedKeys.encryptionKeyServerToClient
+            .sublist(0, cipher.keyLength),
+        initialVector:
+            derivedKeys.initialIvServerToClient.sublist(0, cipher.ivLength),
+        macKey: derivedKeys.integrityKeyServerToClient
+            .sublist(0, integrityKeyLength),
+        macAlgorithm: sshHmacSha256Mac,
       );
 
       final SshServiceRequestMessage serviceRequest =
@@ -2291,8 +2305,8 @@ Future<void> _exerciseSecureSocketTransport() async {
         cookie: List<int>.generate(16, (int index) => index + 21),
         kexAlgorithms: const <String>[sshCurve25519Sha256],
         serverHostKeyAlgorithms: const <String>[sshEd25519HostKeyAlgorithm],
-        encryptionAlgorithmsClientToServer: const <String>[sshAes128CtrCipher],
-        encryptionAlgorithmsServerToClient: const <String>[sshAes128CtrCipher],
+        encryptionAlgorithmsClientToServer: <String>[encryptionAlgorithm],
+        encryptionAlgorithmsServerToClient: <String>[encryptionAlgorithm],
         macAlgorithmsClientToServer: const <String>[sshHmacSha256Mac],
         macAlgorithmsServerToClient: const <String>[sshHmacSha256Mac],
         compressionAlgorithmsClientToServer: const <String>[sshNoCompression],
@@ -2355,20 +2369,29 @@ Future<void> _exerciseSecureSocketTransport() async {
           exchangeHash: rekeyExchangeHash,
           sessionIdentifier: exchangeHash,
         ),
-        ivLength: 16,
-        encryptionKeyLength: 16,
-        integrityKeyLength: 32,
+        ivLength: cipher.ivLength,
+        encryptionKeyLength: cipher.keyLength,
+        integrityKeyLength: integrityKeyLength,
       );
-      protectedReader = SshAesCtrHmacPacketReaderState(
-        encryptionKey: rekeyDerivedKeys.encryptionKeyClientToServer,
-        initialVector: rekeyDerivedKeys.initialIvClientToServer,
-        macKey: rekeyDerivedKeys.integrityKeyClientToServer,
+      protectedReader = sshCreatePacketReaderState(
+        encryptionAlgorithm: encryptionAlgorithm,
+        encryptionKey: rekeyDerivedKeys.encryptionKeyClientToServer
+            .sublist(0, cipher.keyLength),
+        initialVector: rekeyDerivedKeys.initialIvClientToServer
+            .sublist(0, cipher.ivLength),
+        macKey: rekeyDerivedKeys.integrityKeyClientToServer
+            .sublist(0, integrityKeyLength),
         macAlgorithm: sshHmacSha256Mac,
       );
-      protectedWriter = SshAesCtrHmacPacketWriterState(
-        encryptionKey: rekeyDerivedKeys.encryptionKeyServerToClient,
-        initialVector: rekeyDerivedKeys.initialIvServerToClient,
-        macKey: rekeyDerivedKeys.integrityKeyServerToClient,
+      protectedWriter = sshCreatePacketWriterState(
+        encryptionAlgorithm: encryptionAlgorithm,
+        encryptionKey: rekeyDerivedKeys.encryptionKeyServerToClient
+            .sublist(0, cipher.keyLength),
+        initialVector: rekeyDerivedKeys.initialIvServerToClient
+            .sublist(0, cipher.ivLength),
+        macKey: rekeyDerivedKeys.integrityKeyServerToClient
+            .sublist(0, integrityKeyLength),
+        macAlgorithm: sshHmacSha256Mac,
       );
 
       await socket.close();
@@ -2379,7 +2402,7 @@ Future<void> _exerciseSecureSocketTransport() async {
   }();
 
   final SshSecureSocketTransport transport = SshSecureSocketTransport(
-    encryptionAlgorithms: const <String>[sshAes128CtrCipher],
+    encryptionAlgorithms: <String>[encryptionAlgorithm],
   );
   final SshClient client = SshIoClientFactory.create(
     config: SshClientConfig(
@@ -2410,6 +2433,10 @@ Future<void> _exerciseSecureSocketTransport() async {
   );
   assert(
     transport.handshake!.negotiatedAlgorithms['kex'] == sshCurve25519Sha256,
+  );
+  assert(
+    transport.handshake!.negotiatedAlgorithms['encryptionClientToServer'] ==
+        encryptionAlgorithm,
   );
   await transport.rekey();
   assert(

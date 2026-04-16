@@ -102,6 +102,33 @@ void main() {
     expect(packet!.messageId, SshMessageId.ignore.value);
   });
 
+  test('protects packets with chacha20-poly1305@openssh.com', () {
+    final SshPacketWriterState writer = sshCreatePacketWriterState(
+      encryptionAlgorithm: sshChaCha20Poly1305OpenSshCipher,
+      encryptionKey: List<int>.generate(64, (int index) => index + 1),
+      initialVector: const <int>[],
+      macAlgorithm: sshHmacSha256Mac,
+      macKey: const <int>[],
+    );
+    final SshPacketReaderState reader = sshCreatePacketReaderState(
+      encryptionAlgorithm: sshChaCha20Poly1305OpenSshCipher,
+      encryptionKey: List<int>.generate(64, (int index) => index + 1),
+      initialVector: const <int>[],
+      macAlgorithm: sshHmacSha256Mac,
+      macKey: const <int>[],
+    );
+
+    final Uint8List encoded = writer.encode(
+      <int>[SshMessageId.ignore.value, 5, 4, 3, 2, 1],
+    );
+    final int? expectedFrameLength = reader.expectedFrameLength(encoded);
+    final SshBinaryPacket? packet = reader.tryRead(encoded);
+
+    expect(expectedFrameLength, encoded.length);
+    expect(packet, isNotNull);
+    expect(packet!.messageId, SshMessageId.ignore.value);
+  });
+
   test('triggers rekey policy when thresholds are met', () {
     const SshRekeyPolicy policy = SshRekeyPolicy(
       maxPackets: 4,

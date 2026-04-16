@@ -9,6 +9,7 @@ const String sshRsaSha512HostKeyAlgorithm = 'rsa-sha2-512';
 const String sshEcdsaSha2Nistp256HostKeyAlgorithm = 'ecdsa-sha2-nistp256';
 const String sshEcdsaSha2Nistp384HostKeyAlgorithm = 'ecdsa-sha2-nistp384';
 const String sshEcdsaSha2Nistp521HostKeyAlgorithm = 'ecdsa-sha2-nistp521';
+const String sshChaCha20Poly1305OpenSshCipher = 'chacha20-poly1305@openssh.com';
 const String sshAes128CtrCipher = 'aes128-ctr';
 const String sshAes192CtrCipher = 'aes192-ctr';
 const String sshAes256CtrCipher = 'aes256-ctr';
@@ -111,6 +112,7 @@ final class SshTransportAlgorithms {
   ];
 
   static const List<String> defaultEncryptionAlgorithms = <String>[
+    sshChaCha20Poly1305OpenSshCipher,
     sshAes256CtrCipher,
     sshAes192CtrCipher,
     sshAes128CtrCipher,
@@ -175,6 +177,15 @@ final class SshTransportAlgorithms {
 
   static const Map<String, SshCipherAlgorithm> _cipherAlgorithms =
       <String, SshCipherAlgorithm>{
+    sshChaCha20Poly1305OpenSshCipher: SshCipherAlgorithm(
+      name: sshChaCha20Poly1305OpenSshCipher,
+      keyLength: 64,
+      ivLength: 0,
+      blockSize: 8,
+      protectionMode: SshPacketProtectionMode.aead,
+      macEmbedded: true,
+      tagLength: 16,
+    ),
     sshAes128CtrCipher: SshCipherAlgorithm(
       name: sshAes128CtrCipher,
       keyLength: 16,

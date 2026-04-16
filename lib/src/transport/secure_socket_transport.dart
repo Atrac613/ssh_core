@@ -348,24 +348,24 @@ class SshSecureSocketTransport
     await writePacket(const SshNewKeysMessage().encodePayload());
     SshNewKeysMessage.decodePayload((await readPacket()).payload);
 
-    final int clientIvLength = sshCipherIvLength(
+    final SshCipherAlgorithm clientCipher = _requireCipherAlgorithm(
       negotiatedAlgorithms.encryptionClientToServer,
     );
-    final int serverIvLength = sshCipherIvLength(
+    final SshCipherAlgorithm serverCipher = _requireCipherAlgorithm(
       negotiatedAlgorithms.encryptionServerToClient,
     );
-    final int clientKeyLength = sshCipherKeyLength(
-      negotiatedAlgorithms.encryptionClientToServer,
-    );
-    final int serverKeyLength = sshCipherKeyLength(
-      negotiatedAlgorithms.encryptionServerToClient,
-    );
-    final int clientMacKeyLength = sshMacKeyLength(
-      negotiatedAlgorithms.macClientToServer,
-    );
-    final int serverMacKeyLength = sshMacKeyLength(
-      negotiatedAlgorithms.macServerToClient,
-    );
+    final int clientIvLength = clientCipher.ivLength;
+    final int serverIvLength = serverCipher.ivLength;
+    final int clientKeyLength = clientCipher.keyLength;
+    final int serverKeyLength = serverCipher.keyLength;
+    final int clientMacKeyLength = clientCipher.macEmbedded
+        ? 0
+        : _requireMacAlgorithm(negotiatedAlgorithms.macClientToServer)
+            .keyLength;
+    final int serverMacKeyLength = serverCipher.macEmbedded
+        ? 0
+        : _requireMacAlgorithm(negotiatedAlgorithms.macServerToClient)
+            .keyLength;
     final List<int> effectiveSessionIdentifier = Uint8List.fromList(
       sessionIdentifier ?? exchangeHash,
     );
@@ -380,37 +380,29 @@ class SshSecureSocketTransport
       integrityKeyLength: max(clientMacKeyLength, serverMacKeyLength),
     );
 
-    _writerState = SshAesCtrHmacPacketWriterState(
+    _writerState = sshCreatePacketWriterState(
+      encryptionAlgorithm: negotiatedAlgorithms.encryptionClientToServer,
       encryptionKey: derivedKeys.encryptionKeyClientToServer.sublist(
         0,
         clientKeyLength,
       ),
-      initialVector: derivedKeys.initialIvClientToServer.sublist(
-        0,
-        clientIvLength,
-      ),
-      macKey: derivedKeys.integrityKeyClientToServer.sublist(
-        0,
-        clientMacKeyLength,
-      ),
+      initialVector:
+          derivedKeys.initialIvClientToServer.sublist(0, clientIvLength),
+      macKey:
+          derivedKeys.integrityKeyClientToServer.sublist(0, clientMacKeyLength),
       macAlgorithm: negotiatedAlgorithms.macClientToServer,
-      codec: SshPacketCodec(blockSize: clientIvLength),
     );
-    _readerState = SshAesCtrHmacPacketReaderState(
+    _readerState = sshCreatePacketReaderState(
+      encryptionAlgorithm: negotiatedAlgorithms.encryptionServerToClient,
       encryptionKey: derivedKeys.encryptionKeyServerToClient.sublist(
         0,
         serverKeyLength,
       ),
-      initialVector: derivedKeys.initialIvServerToClient.sublist(
-        0,
-        serverIvLength,
-      ),
-      macKey: derivedKeys.integrityKeyServerToClient.sublist(
-        0,
-        serverMacKeyLength,
-      ),
+      initialVector:
+          derivedKeys.initialIvServerToClient.sublist(0, serverIvLength),
+      macKey:
+          derivedKeys.integrityKeyServerToClient.sublist(0, serverMacKeyLength),
       macAlgorithm: negotiatedAlgorithms.macServerToClient,
-      codec: SshPacketCodec(blockSize: serverIvLength),
     );
     _configureCompression(negotiatedAlgorithms);
 
@@ -682,10 +674,18 @@ class SshSecureSocketTransport
   void _validateNegotiatedAlgorithms(SshNegotiatedAlgorithms negotiated) {
     _requireKeyExchangeAlgorithm(negotiated.keyExchange);
     _requireHostKeyAlgorithm(negotiated.serverHostKey);
-    _requireCipherAlgorithm(negotiated.encryptionClientToServer);
-    _requireCipherAlgorithm(negotiated.encryptionServerToClient);
-    _requireMacAlgorithm(negotiated.macClientToServer);
-    _requireMacAlgorithm(negotiated.macServerToClient);
+    final SshCipherAlgorithm clientCipher = _requireCipherAlgorithm(
+      negotiated.encryptionClientToServer,
+    );
+    final SshCipherAlgorithm serverCipher = _requireCipherAlgorithm(
+      negotiated.encryptionServerToClient,
+    );
+    if (!clientCipher.macEmbedded) {
+      _requireMacAlgorithm(negotiated.macClientToServer);
+    }
+    if (!serverCipher.macEmbedded) {
+      _requireMacAlgorithm(negotiated.macServerToClient);
+    }
     _validateCompressionAlgorithm(negotiated.compressionClientToServer);
     _validateCompressionAlgorithm(negotiated.compressionServerToClient);
   }
@@ -766,9 +766,9 @@ class SshSecureSocketTransport
     }
   }
 
-  void _requireCipherAlgorithm(String algorithm) {
+  SshCipherAlgorithm _requireCipherAlgorithm(String algorithm) {
     try {
-      SshTransportAlgorithms.cipherAlgorithm(algorithm);
+      return SshTransportAlgorithms.cipherAlgorithm(algorithm);
     } on ArgumentError {
       throw SshTransportCryptoException(
         'Unsupported SSH encryption algorithm: $algorithm.',
@@ -776,9 +776,9 @@ class SshSecureSocketTransport
     }
   }
 
-  void _requireMacAlgorithm(String algorithm) {
+  SshMacAlgorithm _requireMacAlgorithm(String algorithm) {
     try {
-      SshTransportAlgorithms.macAlgorithm(algorithm);
+      return SshTransportAlgorithms.macAlgorithm(algorithm);
     } on ArgumentError {
       throw SshTransportCryptoException(
         'Unsupported SSH MAC algorithm: $algorithm.',
