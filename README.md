@@ -16,7 +16,7 @@ Implemented in this scaffold:
 - `SshClient` orchestration and connection state management
 - transport, auth, channel, session, PTY, exec, SFTP, and forwarding contracts
 - auth service and userauth packet helpers for protocol flows
-- protocol authenticator for `none`, `password`, and keyboard-interactive
+- protocol authenticator for `none`, `password`, `publickey`, and keyboard-interactive
 - channel packet helpers for open/data/request/window/close flows
 - session and exec channel-request helpers including PTY/env/exit messages
 - SFTP packet helpers for init/version/open/read/write/status/name flows

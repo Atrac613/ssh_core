@@ -412,6 +412,35 @@ Future<void> _exerciseAuthProtocol() async {
   assert(decodedPkOk.algorithm == 'ssh-ed25519');
   assert(_sameBytes(decodedPkOk.publicKey, pkOk.publicKey));
 
+  final SshUserAuthRequestMessage publicKeyRequest =
+      SshUserAuthRequestMessage.publicKey(
+    username: 'tester',
+    algorithm: 'ssh-ed25519',
+    publicKey: const <int>[1, 2, 3, 4],
+    signature: SshSignature(
+      algorithm: 'ssh-ed25519',
+      blob: const <int>[9, 8, 7],
+    ).encode(),
+  );
+  final SshUserAuthRequestMessage decodedPublicKeyRequest =
+      SshUserAuthRequestMessage.decodePayload(publicKeyRequest.encodePayload());
+  assert(decodedPublicKeyRequest.methodName == 'publickey');
+  final SshPayloadReader publicKeyReader = SshPayloadReader(
+    decodedPublicKeyRequest.methodPayload,
+  );
+  final bool includesSignature = publicKeyReader.readBool();
+  final String publicKeyAlgorithm = publicKeyReader.readString();
+  final Uint8List publicKeyBytes = publicKeyReader.readStringBytes();
+  final SshSignature publicKeySignature = SshSignature.decode(
+    publicKeyReader.readStringBytes(),
+  );
+  assert(includesSignature);
+  assert(publicKeyAlgorithm == 'ssh-ed25519');
+  assert(_sameBytes(publicKeyBytes, const <int>[1, 2, 3, 4]));
+  assert(publicKeySignature.algorithm == 'ssh-ed25519');
+  assert(_sameBytes(publicKeySignature.blob, const <int>[9, 8, 7]));
+  publicKeyReader.expectDone();
+
   final SshUserAuthInfoRequestMessage infoRequest =
       SshUserAuthInfoRequestMessage(
     name: 'Verification',
@@ -560,6 +589,89 @@ Future<void> _exerciseProtocolAuthenticator() async {
     keyboardInteractiveTransport.writtenPayloads[2],
   );
   assert(infoResponse.responses.single == '123456');
+
+  List<int>? publicKeyChallenge;
+  final _ScriptedPacketTransport publicKeyTransport = _ScriptedPacketTransport(
+    scriptedPackets: <List<int>>[
+      SshServiceAcceptMessage(serviceName: sshUserauthService).encodePayload(),
+      SshUserAuthPkOkMessage(
+        algorithm: 'ssh-ed25519',
+        publicKey: const <int>[1, 2, 3, 4],
+      ).encodePayload(),
+      const SshUserAuthSuccessMessage().encodePayload(),
+    ],
+  );
+  final SshAuthResult publicKeyResult = await authenticator.authenticate(
+    context: SshAuthContext(
+      config: const SshClientConfig(host: 'localhost', username: 'tester'),
+      transport: publicKeyTransport,
+      handshake: const SshHandshakeInfo(
+        localIdentification: 'SSH-2.0-ssh_core-test',
+        remoteIdentification: 'SSH-2.0-demo-server',
+        sessionIdentifier: <int>[1, 3, 3, 7],
+      ),
+    ),
+    methods: <SshAuthMethod>[
+      SshPublicKeyAuthMethod(
+        algorithm: 'ssh-ed25519',
+        publicKey: const <int>[1, 2, 3, 4],
+        sign: (List<int> challenge) async {
+          publicKeyChallenge = List<int>.from(challenge);
+          return const <int>[4, 3, 2, 1];
+        },
+      ),
+    ],
+  );
+  assert(publicKeyResult.isSuccess);
+  assert(publicKeyTransport.writtenPayloads.length == 3);
+  final SshUserAuthRequestMessage unsignedPublicKeyRequest =
+      SshUserAuthRequestMessage.decodePayload(
+    publicKeyTransport.writtenPayloads[1],
+  );
+  final SshPayloadReader unsignedPublicKeyReader = SshPayloadReader(
+    unsignedPublicKeyRequest.methodPayload,
+  );
+  final bool unsignedHasSignature = unsignedPublicKeyReader.readBool();
+  final String unsignedAlgorithm = unsignedPublicKeyReader.readString();
+  final Uint8List unsignedPublicKey = unsignedPublicKeyReader.readStringBytes();
+  assert(unsignedHasSignature == false);
+  assert(unsignedAlgorithm == 'ssh-ed25519');
+  assert(_sameBytes(unsignedPublicKey, const <int>[1, 2, 3, 4]));
+  unsignedPublicKeyReader.expectDone();
+
+  final SshUserAuthRequestMessage signedPublicKeyRequest =
+      SshUserAuthRequestMessage.decodePayload(
+    publicKeyTransport.writtenPayloads[2],
+  );
+  final SshPayloadReader signedPublicKeyReader = SshPayloadReader(
+    signedPublicKeyRequest.methodPayload,
+  );
+  final bool signedHasSignature = signedPublicKeyReader.readBool();
+  final String signedAlgorithm = signedPublicKeyReader.readString();
+  final Uint8List signedPublicKey = signedPublicKeyReader.readStringBytes();
+  final SshSignature signedSignature = SshSignature.decode(
+    signedPublicKeyReader.readStringBytes(),
+  );
+  assert(signedHasSignature);
+  assert(signedAlgorithm == 'ssh-ed25519');
+  assert(_sameBytes(signedPublicKey, const <int>[1, 2, 3, 4]));
+  assert(signedSignature.algorithm == 'ssh-ed25519');
+  assert(_sameBytes(signedSignature.blob, const <int>[4, 3, 2, 1]));
+  signedPublicKeyReader.expectDone();
+
+  final Uint8List expectedPublicKeyChallenge = (SshPayloadWriter()
+        ..writeStringBytes(const <int>[1, 3, 3, 7])
+        ..writeByte(SshMessageId.userauthRequest.value)
+        ..writeString('tester')
+        ..writeString(sshConnectionService)
+        ..writeString('publickey')
+        ..writeBool(true)
+        ..writeString('ssh-ed25519')
+        ..writeStringBytes(const <int>[1, 2, 3, 4]))
+      .toBytes();
+  assert(
+    _sameBytes(publicKeyChallenge ?? const <int>[], expectedPublicKeyChallenge),
+  );
 }
 
 Future<void> _exerciseChannelProtocol() async {

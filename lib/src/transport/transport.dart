@@ -30,18 +30,21 @@ class SshHandshakeInfo {
     required this.localIdentification,
     required this.remoteIdentification,
     this.negotiatedAlgorithms = const <String, String>{},
+    this.sessionIdentifier,
     this.hostKey,
   });
 
   factory SshHandshakeInfo.fromBannerExchange(
     SshBannerExchangeResult exchange, {
     Map<String, String> negotiatedAlgorithms = const <String, String>{},
+    List<int>? sessionIdentifier,
     SshHostKey? hostKey,
   }) {
     return SshHandshakeInfo(
       localIdentification: exchange.localBanner.value,
       remoteIdentification: exchange.remoteBanner.value,
       negotiatedAlgorithms: negotiatedAlgorithms,
+      sessionIdentifier: sessionIdentifier,
       hostKey: hostKey,
     );
   }
@@ -49,6 +52,7 @@ class SshHandshakeInfo {
   final String localIdentification;
   final String remoteIdentification;
   final Map<String, String> negotiatedAlgorithms;
+  final List<int>? sessionIdentifier;
   final SshHostKey? hostKey;
 }
 

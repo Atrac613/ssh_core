@@ -1,4 +1,6 @@
 import '../core/exceptions.dart';
+import '../transport/message_codec.dart';
+import '../transport/signature.dart';
 import '../transport/transport.dart';
 import 'auth.dart';
 import 'protocol.dart';
@@ -28,6 +30,7 @@ class SshUserAuthProtocolAuthenticator implements SshAuthenticator {
       final SshAuthResult result = await _authenticateWithMethod(
         transport: transport,
         username: context.config.username,
+        sessionIdentifier: context.handshake.sessionIdentifier,
         method: method,
       );
       if (result.isSuccess) {
@@ -80,6 +83,7 @@ class SshUserAuthProtocolAuthenticator implements SshAuthenticator {
   Future<SshAuthResult> _authenticateWithMethod({
     required SshPacketTransport transport,
     required String username,
+    required List<int>? sessionIdentifier,
     required SshAuthMethod method,
   }) async {
     if (method is SshNoneAuthMethod) {
@@ -114,14 +118,34 @@ class SshUserAuthProtocolAuthenticator implements SshAuthenticator {
       return _readAuthResult(
         transport: transport,
         method: method,
+        username: username,
+        sessionIdentifier: sessionIdentifier,
         keyboardInteractiveResponder: method.respond,
       );
     }
 
     if (method is SshPublicKeyAuthMethod) {
-      return const SshAuthResult.failure(
-        message:
-            'Public key userauth is not implemented yet in the protocol authenticator.',
+      final List<int>? sessionId = sessionIdentifier;
+      if (sessionId == null || sessionId.isEmpty) {
+        return const SshAuthResult.failure(
+          message:
+              'Public key userauth requires a transport session identifier.',
+        );
+      }
+
+      await transport.writePacket(
+        SshUserAuthRequestMessage.publicKey(
+          username: username,
+          serviceName: serviceName,
+          algorithm: method.algorithm,
+          publicKey: method.publicKey,
+        ).encodePayload(),
+      );
+      return _readAuthResult(
+        transport: transport,
+        method: method,
+        username: username,
+        sessionIdentifier: sessionId,
       );
     }
 
@@ -133,6 +157,8 @@ class SshUserAuthProtocolAuthenticator implements SshAuthenticator {
   Future<SshAuthResult> _readAuthResult({
     required SshPacketTransport transport,
     required SshAuthMethod method,
+    String? username,
+    List<int>? sessionIdentifier,
     SshKeyboardInteractiveResponder? keyboardInteractiveResponder,
   }) async {
     for (;;) {
@@ -152,6 +178,37 @@ class SshUserAuthProtocolAuthenticator implements SshAuthenticator {
           await _consumeBanner(packet);
           continue;
         case 60:
+          if (method is SshPublicKeyAuthMethod) {
+            final String? authUsername = username;
+            final List<int>? sessionId = sessionIdentifier;
+            if (authUsername == null ||
+                sessionId == null ||
+                sessionId.isEmpty) {
+              throw const SshAuthException(
+                'Public key userauth is missing session identifier context.',
+              );
+            }
+
+            final SshUserAuthPkOkMessage pkOk =
+                SshUserAuthPkOkMessage.decodePayload(packet.payload);
+            if (pkOk.algorithm != method.algorithm ||
+                !_sameBytes(pkOk.publicKey, method.publicKey)) {
+              throw SshAuthException(
+                'SSH peer acknowledged a different public key than requested.',
+              );
+            }
+
+            await transport.writePacket(
+              (await _buildSignedPublicKeyRequest(
+                username: authUsername,
+                sessionIdentifier: sessionId,
+                method: method,
+              ))
+                  .encodePayload(),
+            );
+            continue;
+          }
+
           final SshKeyboardInteractiveResponder? responder =
               keyboardInteractiveResponder;
           if (responder == null) {
@@ -182,6 +239,36 @@ class SshUserAuthProtocolAuthenticator implements SshAuthenticator {
     SshUserAuthBannerMessage.decodePayload(packet.payload);
   }
 
+  Future<SshUserAuthRequestMessage> _buildSignedPublicKeyRequest({
+    required String username,
+    required List<int> sessionIdentifier,
+    required SshPublicKeyAuthMethod method,
+  }) async {
+    final SshPayloadWriter signatureInputWriter = SshPayloadWriter()
+      ..writeStringBytes(sessionIdentifier)
+      ..writeByte(SshMessageId.userauthRequest.value)
+      ..writeString(username)
+      ..writeString(serviceName)
+      ..writeString(method.name)
+      ..writeBool(true)
+      ..writeString(method.algorithm)
+      ..writeStringBytes(method.publicKey);
+    final List<int> signatureBlob = await method.sign(
+      signatureInputWriter.toBytes(),
+    );
+    final SshSignature signature = SshSignature(
+      algorithm: method.algorithm,
+      blob: signatureBlob,
+    );
+    return SshUserAuthRequestMessage.publicKey(
+      username: username,
+      serviceName: serviceName,
+      algorithm: method.algorithm,
+      publicKey: method.publicKey,
+      signature: signature.encode(),
+    );
+  }
+
   SshPacketTransport _requirePacketTransport(SshTransport transport) {
     if (transport is SshPacketTransport) {
       return transport;
@@ -190,5 +277,19 @@ class SshUserAuthProtocolAuthenticator implements SshAuthenticator {
     throw const SshAuthException(
       'SSH authenticator requires a packet-capable transport.',
     );
+  }
+
+  bool _sameBytes(List<int> left, List<int> right) {
+    if (left.length != right.length) {
+      return false;
+    }
+
+    for (int index = 0; index < left.length; index += 1) {
+      if (left[index] != right[index]) {
+        return false;
+      }
+    }
+
+    return true;
   }
 }
