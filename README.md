@@ -130,6 +130,20 @@ For `dart:io` environments, `package:ssh_core/ssh_core_io.dart` now exposes:
 - `SshIoClientFactory` for building a live `SshClient` with protocol-backed
   auth, channels, shell/exec, SFTP, and forwarding services
 
+## Compatibility Matrix
+
+Current secure transport interoperability is intentionally narrow and explicit:
+
+| Category | Supported |
+| --- | --- |
+| KEX | `curve25519-sha256`, `curve25519-sha256@libssh.org` |
+| Host key | `ssh-ed25519`, `rsa-sha2-256`, `rsa-sha2-512`, `ecdsa-sha2-nistp256` |
+| Cipher | `aes128-ctr`, `aes192-ctr`, `aes256-ctr` |
+| MAC | `hmac-sha2-256`, `hmac-sha2-512` |
+| Compression | `none`, `zlib`, `zlib@openssh.com` |
+| Auth | `none`, `password`, `publickey`, `keyboard-interactive` |
+| Forwarding | local, remote, dynamic TCP forwarding, including assigned remote ports |
+
 ## Suggested implementation order
 
 1. transport socket integration around packet codec and banner exchange
