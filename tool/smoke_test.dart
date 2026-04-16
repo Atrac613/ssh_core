@@ -161,6 +161,61 @@ Future<void> _exerciseTransportPrimitives() async {
     decodedKexInit.serverHostKeyAlgorithms.single == 'ssh-ed25519',
   );
   assert(decodedKexInit.cookie.length == 16);
+
+  final SshAlgorithmNegotiator negotiator = const SshAlgorithmNegotiator();
+  final SshNegotiatedAlgorithms negotiatedAlgorithms = negotiator.negotiate(
+    clientProposal: SshKexInitMessage(
+      cookie: List<int>.filled(16, 1),
+      kexAlgorithms: const <String>[
+        'curve25519-sha256',
+        'diffie-hellman-group14-sha256',
+      ],
+      serverHostKeyAlgorithms: const <String>['ssh-ed25519', 'rsa-sha2-256'],
+      encryptionAlgorithmsClientToServer: const <String>[
+        'aes256-ctr',
+        'aes128-ctr',
+      ],
+      encryptionAlgorithmsServerToClient: const <String>[
+        'aes256-ctr',
+        'aes128-ctr',
+      ],
+      macAlgorithmsClientToServer: const <String>['hmac-sha2-512'],
+      macAlgorithmsServerToClient: const <String>['hmac-sha2-256'],
+      compressionAlgorithmsClientToServer: const <String>['none', 'zlib'],
+      compressionAlgorithmsServerToClient: const <String>['none', 'zlib'],
+      languagesClientToServer: const <String>['ja-JP', 'en-US'],
+      languagesServerToClient: const <String>['en-US'],
+    ),
+    serverProposal: SshKexInitMessage(
+      cookie: List<int>.filled(16, 2),
+      kexAlgorithms: const <String>[
+        'diffie-hellman-group14-sha256',
+        'curve25519-sha256',
+      ],
+      serverHostKeyAlgorithms: const <String>['rsa-sha2-256', 'ssh-ed25519'],
+      encryptionAlgorithmsClientToServer: const <String>['aes128-ctr'],
+      encryptionAlgorithmsServerToClient: const <String>['aes128-ctr'],
+      macAlgorithmsClientToServer: const <String>['hmac-sha2-512'],
+      macAlgorithmsServerToClient: const <String>['hmac-sha2-256'],
+      compressionAlgorithmsClientToServer: const <String>['zlib', 'none'],
+      compressionAlgorithmsServerToClient: const <String>['none'],
+      languagesClientToServer: const <String>['en-US'],
+      languagesServerToClient: const <String>['fr-FR'],
+      firstKexPacketFollows: true,
+    ),
+  );
+  assert(negotiatedAlgorithms.keyExchange == 'curve25519-sha256');
+  assert(negotiatedAlgorithms.serverHostKey == 'ssh-ed25519');
+  assert(negotiatedAlgorithms.encryptionClientToServer == 'aes128-ctr');
+  assert(negotiatedAlgorithms.encryptionServerToClient == 'aes128-ctr');
+  assert(negotiatedAlgorithms.macClientToServer == 'hmac-sha2-512');
+  assert(negotiatedAlgorithms.macServerToClient == 'hmac-sha2-256');
+  assert(negotiatedAlgorithms.compressionClientToServer == 'none');
+  assert(negotiatedAlgorithms.compressionServerToClient == 'none');
+  assert(negotiatedAlgorithms.languageClientToServer == 'en-US');
+  assert(negotiatedAlgorithms.languageServerToClient == null);
+  assert(negotiatedAlgorithms.ignoreGuessedClientPacket == false);
+  assert(negotiatedAlgorithms.ignoreGuessedServerPacket);
 }
 
 Future<void> _exerciseSocketTransport() async {

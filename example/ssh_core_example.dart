@@ -32,6 +32,8 @@ Future<void> main() async {
 
 class DemoTransport implements SshTransport {
   final SshBannerExchange _bannerExchange = const SshBannerExchange();
+  final SshAlgorithmNegotiator _algorithmNegotiator =
+      const SshAlgorithmNegotiator();
 
   @override
   SshTransportState get state => SshTransportState.connected;
@@ -53,13 +55,45 @@ class DemoTransport implements SshTransport {
         await transportStream.exchangeBanners(
       localIdentification: settings.clientIdentification,
     );
+    final SshNegotiatedAlgorithms algorithms = _algorithmNegotiator.negotiate(
+      clientProposal: SshKexInitMessage(
+        cookie: List<int>.filled(16, 1),
+        kexAlgorithms: const <String>[
+          'curve25519-sha256',
+          'diffie-hellman-group14-sha256',
+        ],
+        serverHostKeyAlgorithms: const <String>['ssh-ed25519', 'rsa-sha2-256'],
+        encryptionAlgorithmsClientToServer: const <String>[
+          'chacha20-poly1305@openssh.com',
+        ],
+        encryptionAlgorithmsServerToClient: const <String>[
+          'chacha20-poly1305@openssh.com',
+        ],
+        macAlgorithmsClientToServer: const <String>['hmac-sha2-256'],
+        macAlgorithmsServerToClient: const <String>['hmac-sha2-256'],
+        compressionAlgorithmsClientToServer: const <String>['none'],
+        compressionAlgorithmsServerToClient: const <String>['none'],
+      ),
+      serverProposal: SshKexInitMessage(
+        cookie: List<int>.filled(16, 2),
+        kexAlgorithms: const <String>['curve25519-sha256'],
+        serverHostKeyAlgorithms: const <String>['ssh-ed25519'],
+        encryptionAlgorithmsClientToServer: const <String>[
+          'chacha20-poly1305@openssh.com',
+        ],
+        encryptionAlgorithmsServerToClient: const <String>[
+          'chacha20-poly1305@openssh.com',
+        ],
+        macAlgorithmsClientToServer: const <String>['hmac-sha2-256'],
+        macAlgorithmsServerToClient: const <String>['hmac-sha2-256'],
+        compressionAlgorithmsClientToServer: const <String>['none'],
+        compressionAlgorithmsServerToClient: const <String>['none'],
+      ),
+    );
 
     return SshHandshakeInfo.fromBannerExchange(
       exchange,
-      negotiatedAlgorithms: const <String, String>{
-        'kex': 'curve25519-sha256',
-        'cipher': 'chacha20-poly1305@openssh.com',
-      },
+      negotiatedAlgorithms: algorithms.asHandshakeMap(),
     );
   }
 
