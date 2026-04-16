@@ -31,6 +31,8 @@ Future<void> main() async {
 }
 
 class DemoTransport implements SshTransport {
+  final SshBannerExchange _bannerExchange = const SshBannerExchange();
+
   @override
   SshTransportState get state => SshTransportState.connected;
 
@@ -39,9 +41,16 @@ class DemoTransport implements SshTransport {
     required SshEndpoint endpoint,
     required SshTransportSettings settings,
   }) async {
-    return SshHandshakeInfo(
+    final SshBannerExchangeResult exchange = _bannerExchange.resolve(
       localIdentification: settings.clientIdentification,
-      remoteIdentification: 'SSH-2.0-demo-server',
+      remoteLines: const <String>[
+        'demo prelude line',
+        'SSH-2.0-demo-server example',
+      ],
+    );
+
+    return SshHandshakeInfo.fromBannerExchange(
+      exchange,
       negotiatedAlgorithms: const <String, String>{
         'kex': 'curve25519-sha256',
         'cipher': 'chacha20-poly1305@openssh.com',
@@ -125,11 +134,17 @@ class DemoSessionManager implements SshSessionManager {
 }
 
 class DemoExecService implements SshExecService {
+  final SshPacketCodec _packetCodec = const SshPacketCodec();
+
   @override
   Future<SshExecResult> exec(SshExecRequest request) async {
+    final SshBinaryPacket packet = _packetCodec.decode(
+      _packetCodec.encode(utf8.encode(request.command)),
+    );
+
     return SshExecResult(
       exitCode: 0,
-      stdout: utf8.encode('demo:${request.command}\n'),
+      stdout: utf8.encode('demo:${utf8.decode(packet.payload)}\n'),
     );
   }
 }

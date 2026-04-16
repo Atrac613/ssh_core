@@ -15,14 +15,15 @@ Implemented in this scaffold:
 
 - `SshClient` orchestration and connection state management
 - transport, auth, channel, session, PTY, exec, SFTP, and forwarding contracts
+- transport banner parsing/exchange helpers and binary packet framing helpers
 - a smoke test that exercises the package with fake implementations
 - example wiring showing how a concrete implementation can plug into the stack
 
 Not implemented yet:
 
-- packet framing and binary codec
+- real socket-based transport I/O
 - key exchange and encryption
-- message authentication and rekeying
+- message authentication, compression, and rekeying
 - concrete password/public-key/keyboard-interactive exchanges
 - real channel multiplexing, SFTP packets, and port forwarding streams
 
@@ -69,9 +70,22 @@ Future<void> main() async {
 
 See `example/ssh_core_example.dart` for a complete compiling example.
 
+## Transport Primitives
+
+The transport module now includes low-level helpers for the earliest SSH
+handshake steps:
+
+- `SshTransportBanner` and `SshBannerExchange` for SSH identification strings
+- `SshPacketCodec` for SSH binary packet framing
+- `SshPacketReader` for reading framed packets from chunked byte streams
+
+These helpers intentionally stop short of encryption, MAC verification, and
+socket ownership. They are meant to be reused by a future concrete transport
+implementation.
+
 ## Suggested implementation order
 
-1. transport packet reader/writer and protocol banner exchange
+1. transport socket integration around packet codec and banner exchange
 2. key exchange and host-key verification
 3. user authentication service
 4. channel multiplexer and session channels

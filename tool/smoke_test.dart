@@ -1,8 +1,11 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:ssh_core/ssh_core.dart';
 
 Future<void> main() async {
+  _exerciseTransportPrimitives();
+
   final client = SshClient(
     config: const SshClientConfig(host: 'localhost', username: 'tester'),
     authMethods: const <SshAuthMethod>[SshPasswordAuthMethod(password: 'pw')],
@@ -49,8 +52,48 @@ Future<void> main() async {
   assert(client.state == SshClientState.closed);
 }
 
+void _exerciseTransportPrimitives() {
+  final SshBannerExchange bannerExchange = const SshBannerExchange();
+  final SshBannerExchangeResult exchange = bannerExchange.resolve(
+    localIdentification: 'SSH-2.0-ssh_core-test',
+    remoteLines: const <String>[
+      'prelude one',
+      'prelude two',
+      'SSH-2.0-demo-server integration',
+    ],
+  );
+
+  assert(exchange.localBanner.protocolVersion == '2.0');
+  assert(exchange.remoteBanner.softwareVersion == 'demo-server');
+  assert(exchange.ignoredLines.length == 2);
+  assert(
+    bannerExchange.formatLocalLine('SSH-2.0-ssh_core-test') ==
+        'SSH-2.0-ssh_core-test\r\n',
+  );
+
+  final SshPacketCodec codec = SshPacketCodec(
+    paddingBytesFactory: (int length) =>
+        List<int>.generate(length, (int i) => i),
+  );
+  final Uint8List frame = codec.encode(<int>[94, 1, 2, 3]);
+  final SshPacketReader reader = SshPacketReader(codec: codec);
+
+  reader.add(frame.sublist(0, 3));
+  assert(reader.read() == null);
+  reader.add(frame.sublist(3));
+
+  final SshBinaryPacket? packet = reader.read();
+  assert(packet != null);
+  final SshBinaryPacket decodedPacket = packet!;
+  assert(decodedPacket.messageId == 94);
+  assert(decodedPacket.payload.length == 4);
+  assert(decodedPacket.padding.length >= 4);
+  assert(reader.pendingByteCount == 0);
+}
+
 class _FakeTransport implements SshTransport {
   SshTransportState _state = SshTransportState.disconnected;
+  final SshBannerExchange _bannerExchange = const SshBannerExchange();
 
   @override
   SshTransportState get state => _state;
@@ -61,9 +104,16 @@ class _FakeTransport implements SshTransport {
     required SshTransportSettings settings,
   }) async {
     _state = SshTransportState.connected;
-    return SshHandshakeInfo(
+    final SshBannerExchangeResult exchange = _bannerExchange.resolve(
       localIdentification: settings.clientIdentification,
-      remoteIdentification: 'SSH-2.0-fake',
+      remoteLines: const <String>[
+        'fake daemon boot message',
+        'SSH-2.0-fake',
+      ],
+    );
+
+    return SshHandshakeInfo.fromBannerExchange(
+      exchange,
       negotiatedAlgorithms: const <String, String>{'kex': 'curve25519-sha256'},
     );
   }
