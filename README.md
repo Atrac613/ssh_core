@@ -42,7 +42,6 @@ Not implemented yet:
 - real encrypted and authenticated transport after banner exchange
 - key exchange and encryption
 - message authentication, compression, and rekeying
-- concrete password/public-key/keyboard-interactive exchanges
 - real channel multiplexing, SFTP subsystem streams, and port forwarding streams
 
 ## Public modules
@@ -50,7 +49,6 @@ Not implemented yet:
 - `transport`: socket lifecycle, handshake metadata, and global requests
 - `auth`: authentication strategies, auth results, and userauth packet helpers
 - `channels`: generic channel lifecycle and channel packet helpers
-- `sessions`: shell/session abstractions
 - `sessions`: shell/session abstractions and session channel-request helpers
 - `pty`: terminal allocation and resize metadata
 - `exec`: non-interactive command execution
