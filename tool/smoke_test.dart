@@ -7,6 +7,7 @@ import 'package:ssh_core/ssh_core_io.dart';
 
 Future<void> main() async {
   await _exerciseTransportPrimitives();
+  await _exerciseGlobalRequestProtocol();
   await _exerciseAuthProtocol();
   await _exerciseProtocolAuthenticator();
   await _exerciseChannelProtocol();
@@ -430,6 +431,47 @@ Future<void> _exerciseAuthProtocol() async {
     infoResponse.encodePayload(),
   );
   assert(decodedInfoResponse.responses.single == '123456');
+}
+
+Future<void> _exerciseGlobalRequestProtocol() async {
+  final SshGlobalRequestMessage globalRequest = SshGlobalRequestMessage(
+    requestName: 'tcpip-forward',
+    wantReply: true,
+    requestData: (SshPayloadWriter()
+          ..writeString('127.0.0.1')
+          ..writeUint32(8080))
+        .toBytes(),
+  );
+  final SshGlobalRequestMessage decodedGlobalRequest =
+      SshGlobalRequestMessage.decodePayload(globalRequest.encodePayload());
+  assert(decodedGlobalRequest.requestName == 'tcpip-forward');
+  assert(decodedGlobalRequest.wantReply);
+  final SshPayloadReader requestDataReader = SshPayloadReader(
+    decodedGlobalRequest.requestData,
+  );
+  final String requestedHost = requestDataReader.readString();
+  final int requestedPort = requestDataReader.readUint32();
+  assert(requestedHost == '127.0.0.1');
+  assert(requestedPort == 8080);
+  requestDataReader.expectDone();
+
+  final SshRequestSuccessMessage success = SshRequestSuccessMessage(
+    responseData: (SshPayloadWriter()..writeUint32(49152)).toBytes(),
+  );
+  final SshRequestSuccessMessage decodedSuccess =
+      SshRequestSuccessMessage.decodePayload(success.encodePayload());
+  final SshPayloadReader successReader = SshPayloadReader(
+    decodedSuccess.responseData,
+  );
+  final int boundPort = successReader.readUint32();
+  assert(boundPort == 49152);
+  successReader.expectDone();
+
+  final SshRequestFailureMessage failure = const SshRequestFailureMessage();
+  final SshRequestFailureMessage decodedFailure =
+      SshRequestFailureMessage.decodePayload(failure.encodePayload());
+  assert(decodedFailure.encodePayload().single ==
+      SshMessageId.requestFailure.value);
 }
 
 Future<void> _exerciseProtocolAuthenticator() async {

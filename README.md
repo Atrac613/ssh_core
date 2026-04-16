@@ -21,6 +21,7 @@ Implemented in this scaffold:
 - session and exec channel-request helpers including PTY/env/exit messages
 - SFTP packet helpers for init/version/open/read/write/status/name flows
 - transport payload/message codec and `SSH_MSG_KEXINIT` helper
+- transport global-request helpers for forwarding-related flows
 - transport algorithm negotiation for client/server `KEXINIT` proposals
 - host key parsing and verifier contracts for the pre-auth handshake
 - ECDH key exchange message and exchange-hash input helpers
