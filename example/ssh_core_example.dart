@@ -32,7 +32,6 @@ Future<void> main() async {
 
 class DemoTransport implements SshTransport {
   final SshBannerExchange _bannerExchange = const SshBannerExchange();
-  final SshTransportBuffer _transportBuffer = SshTransportBuffer();
 
   @override
   SshTransportState get state => SshTransportState.connected;
@@ -42,22 +41,17 @@ class DemoTransport implements SshTransport {
     required SshEndpoint endpoint,
     required SshTransportSettings settings,
   }) async {
-    _transportBuffer.add(
-      utf8.encode('demo prelude line\r\nSSH-2.0-demo-server example\r\n'),
+    final SshTransportStream transportStream = SshTransportStream(
+      incoming: Stream<List<int>>.fromIterable(<List<int>>[
+        utf8.encode('demo prelude line\r\nSSH-2.0-demo-server example\r\n'),
+      ]),
+      onWrite: (List<int> bytes) {},
+      bannerExchange: _bannerExchange,
     );
 
-    final List<String> remoteLines = <String>[];
-    for (;;) {
-      final String? line = _transportBuffer.readLine();
-      if (line == null) {
-        break;
-      }
-      remoteLines.add(line);
-    }
-
-    final SshBannerExchangeResult exchange = _bannerExchange.resolve(
+    final SshBannerExchangeResult exchange =
+        await transportStream.exchangeBanners(
       localIdentification: settings.clientIdentification,
-      remoteLines: remoteLines,
     );
 
     return SshHandshakeInfo.fromBannerExchange(

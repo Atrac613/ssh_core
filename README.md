@@ -77,6 +77,7 @@ handshake steps:
 
 - `SshTransportBanner` and `SshBannerExchange` for SSH identification strings
 - `SshTransportBuffer` for mixed line and packet reads from one byte stream
+- `SshTransportStream` for async banner and packet I/O over byte streams
 - `SshLineReader` for chunked banner line parsing from socket bytes
 - `SshPacketCodec` for SSH binary packet framing
 - `SshPacketReader` for reading framed packets from chunked byte streams

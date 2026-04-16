@@ -4,7 +4,7 @@ import 'dart:typed_data';
 import 'package:ssh_core/ssh_core.dart';
 
 Future<void> main() async {
-  _exerciseTransportPrimitives();
+  await _exerciseTransportPrimitives();
 
   final client = SshClient(
     config: const SshClientConfig(host: 'localhost', username: 'tester'),
@@ -52,7 +52,7 @@ Future<void> main() async {
   assert(client.state == SshClientState.closed);
 }
 
-void _exerciseTransportPrimitives() {
+Future<void> _exerciseTransportPrimitives() async {
   final SshPacketCodec codec = SshPacketCodec(
     paddingBytesFactory: (int length) =>
         List<int>.generate(length, (int i) => i),
@@ -104,12 +104,40 @@ void _exerciseTransportPrimitives() {
   assert(decodedPacket.payload.length == 4);
   assert(decodedPacket.padding.length >= 4);
   assert(transportBuffer.pendingByteCount == 0);
+
+  final List<List<int>> outboundWrites = <List<int>>[];
+  final SshTransportStream transportStream = SshTransportStream(
+    incoming: Stream<List<int>>.fromIterable(<List<int>>[
+      utf8.encode('prelude one\r\nSSH-2.0-demo-server integration\r\n'),
+      frame.sublist(0, 3),
+      frame.sublist(3),
+    ]),
+    onWrite: (List<int> bytes) {
+      outboundWrites.add(List<int>.from(bytes));
+    },
+    bannerExchange: bannerExchange,
+    packetCodec: codec,
+  );
+
+  final SshBannerExchangeResult streamedExchange =
+      await transportStream.exchangeBanners(
+    localIdentification: 'SSH-2.0-ssh_core-test',
+  );
+  assert(streamedExchange.remoteBanner.softwareVersion == 'demo-server');
+  assert(
+    utf8.decode(outboundWrites.single) == 'SSH-2.0-ssh_core-test\r\n',
+  );
+
+  final SshBinaryPacket streamedPacket = await transportStream.readPacket();
+  assert(streamedPacket.messageId == 94);
+  assert(streamedPacket.payload.length == 4);
+  assert(transportStream.pendingByteCount == 0);
+  await transportStream.close();
 }
 
 class _FakeTransport implements SshTransport {
   SshTransportState _state = SshTransportState.disconnected;
   final SshBannerExchange _bannerExchange = const SshBannerExchange();
-  final SshTransportBuffer _transportBuffer = SshTransportBuffer();
 
   @override
   SshTransportState get state => _state;
@@ -120,22 +148,17 @@ class _FakeTransport implements SshTransport {
     required SshTransportSettings settings,
   }) async {
     _state = SshTransportState.connected;
-    _transportBuffer.add(
-      utf8.encode('fake daemon boot message\r\nSSH-2.0-fake\r\n'),
+    final SshTransportStream transportStream = SshTransportStream(
+      incoming: Stream<List<int>>.fromIterable(<List<int>>[
+        utf8.encode('fake daemon boot message\r\nSSH-2.0-fake\r\n'),
+      ]),
+      onWrite: (List<int> bytes) {},
+      bannerExchange: _bannerExchange,
     );
 
-    final List<String> remoteLines = <String>[];
-    for (;;) {
-      final String? line = _transportBuffer.readLine();
-      if (line == null) {
-        break;
-      }
-      remoteLines.add(line);
-    }
-
-    final SshBannerExchangeResult exchange = _bannerExchange.resolve(
+    final SshBannerExchangeResult exchange =
+        await transportStream.exchangeBanners(
       localIdentification: settings.clientIdentification,
-      remoteLines: remoteLines,
     );
 
     return SshHandshakeInfo.fromBannerExchange(

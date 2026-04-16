@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -427,6 +428,107 @@ class SshPacketReader {
   }
 
   SshBinaryPacket? read() => _buffer.readPacket();
+}
+
+typedef SshTransportWriteCallback = FutureOr<void> Function(List<int> bytes);
+
+typedef SshTransportCloseCallback = FutureOr<void> Function();
+
+class SshTransportStream {
+  SshTransportStream({
+    required Stream<List<int>> incoming,
+    required SshTransportWriteCallback onWrite,
+    SshTransportCloseCallback? onClose,
+    this.bannerExchange = const SshBannerExchange(),
+    SshPacketCodec packetCodec = const SshPacketCodec(),
+    int maxLineLength = 255,
+  })  : _incoming = StreamIterator<List<int>>(incoming),
+        _onWrite = onWrite,
+        _onClose = onClose,
+        _buffer = SshTransportBuffer(
+          packetCodec: packetCodec,
+          maxLineLength: maxLineLength,
+        );
+
+  final StreamIterator<List<int>> _incoming;
+  final SshTransportWriteCallback _onWrite;
+  final SshTransportCloseCallback? _onClose;
+  final SshTransportBuffer _buffer;
+  final SshBannerExchange bannerExchange;
+
+  SshPacketCodec get packetCodec => _buffer.packetCodec;
+
+  int get pendingByteCount => _buffer.pendingByteCount;
+
+  Future<SshBannerExchangeResult> exchangeBanners({
+    required String localIdentification,
+  }) async {
+    await writeBytes(
+      utf8.encode(bannerExchange.formatLocalLine(localIdentification)),
+    );
+
+    final List<String> remoteLines = <String>[];
+    for (;;) {
+      final String? line = _buffer.readLine();
+      if (line != null) {
+        remoteLines.add(line);
+        if (line.startsWith('SSH-')) {
+          return bannerExchange.resolve(
+            localIdentification: localIdentification,
+            remoteLines: remoteLines,
+          );
+        }
+        continue;
+      }
+
+      if (!await _fillBuffer()) {
+        throw StateError(
+          'SSH peer closed before sending an identification line.',
+        );
+      }
+    }
+  }
+
+  Future<SshBinaryPacket> readPacket() async {
+    for (;;) {
+      final SshBinaryPacket? packet = _buffer.readPacket();
+      if (packet != null) {
+        return packet;
+      }
+
+      if (!await _fillBuffer()) {
+        throw StateError(
+          'SSH peer closed before a complete packet was received.',
+        );
+      }
+    }
+  }
+
+  Future<void> writePacket(List<int> payload) async {
+    await writeBytes(packetCodec.encode(payload));
+  }
+
+  Future<void> writeBytes(List<int> bytes) async {
+    await Future<void>.value(_onWrite(bytes));
+  }
+
+  Future<void> close() async {
+    await _incoming.cancel();
+    final SshTransportCloseCallback? onClose = _onClose;
+    if (onClose != null) {
+      await Future<void>.value(onClose());
+    }
+  }
+
+  Future<bool> _fillBuffer() async {
+    final bool hasNext = await _incoming.moveNext();
+    if (!hasNext) {
+      return false;
+    }
+
+    _buffer.add(_incoming.current);
+    return true;
+  }
 }
 
 List<int> _zeroPadding(int length) => List<int>.filled(length, 0);
