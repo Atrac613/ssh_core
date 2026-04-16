@@ -2182,7 +2182,7 @@ Future<void> _exerciseSecureSocketTransport() async {
   final SshSecureSocketTransport transport = SshSecureSocketTransport(
     encryptionAlgorithms: const <String>[sshAes128CtrCipher],
   );
-  final SshClient client = SshClient(
+  final SshClient client = SshIoClientFactory.create(
     config: SshClientConfig(
       host: InternetAddress.loopbackIPv4.address,
       port: server.port,
@@ -2202,12 +2202,6 @@ Future<void> _exerciseSecureSocketTransport() async {
     ),
     authMethods: const <SshAuthMethod>[SshPasswordAuthMethod(password: 'pw')],
     transport: transport,
-    authenticator: const SshUserAuthProtocolAuthenticator(),
-    channelFactory: _FakeChannelFactory(),
-    sessionManager: _FakeSessionManager(),
-    execService: _FakeExecService(),
-    sftpSubsystem: _FakeSftpSubsystem(),
-    portForwardingService: _FakePortForwardingService(),
   );
 
   await client.connect();

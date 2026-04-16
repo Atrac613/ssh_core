@@ -25,6 +25,7 @@ Implemented in this scaffold:
 - packet-backed SFTP subsystem for list/read/write/mkdir/delete flows
 - forwarding packet helpers for `tcpip-forward` and TCP/IP channel payloads
 - SOCKS5 helpers for dynamic port-forward request and reply parsing
+- IO-backed local, remote, and dynamic port forwarding bridges
 - remote port-forward control service built on SSH global requests
 - transport payload/message codec and `SSH_MSG_KEXINIT` helper
 - transport global-request helpers for forwarding-related flows
@@ -34,15 +35,19 @@ Implemented in this scaffold:
 - SSH signature blob helper for KEX reply parsing
 - `SSH_MSG_NEWKEYS` helper for the end of key exchange
 - transport banner parsing/exchange helpers and binary packet framing helpers
+- secure socket transport with Curve25519 key exchange, Ed25519 host-key
+  verification, `aes*-ctr` packet encryption, and `hmac-sha2-256`
+- `SshIoClientFactory` for wiring a live `SshClient` with protocol services
 - a smoke test that exercises the package with fake implementations
 - example wiring showing how a concrete implementation can plug into the stack
 
 Not implemented yet:
 
-- real encrypted and authenticated transport after banner exchange
-- key exchange and encryption
-- message authentication, compression, and rekeying
-- real channel multiplexing, SFTP subsystem streams, and port forwarding streams
+- rekeying after the initial key exchange
+- compression algorithms other than `none`
+- broader host-key, cipher, and MAC algorithm coverage
+- remote forwarding with auto-assigned remote ports and advanced forwarding
+  variants
 
 ## Public modules
 
@@ -115,13 +120,13 @@ handshake steps:
 - `SshPacketCodec` for SSH binary packet framing
 - `SshPacketReader` for reading framed packets from chunked byte streams
 
-These helpers intentionally stop short of encryption, MAC verification, and
-socket ownership. They are meant to be reused by a future concrete transport
-implementation.
+For `dart:io` environments, `package:ssh_core/ssh_core_io.dart` now exposes:
 
-For `dart:io` environments, `package:ssh_core/ssh_core_io.dart` exposes a
-socket-backed transport that performs the SSH identification exchange and keeps
-the connection ready for packet-level reads and writes.
+- `SshSocketTransport` for banner exchange and plain packet I/O primitives
+- `SshSecureSocketTransport` for the initial secure handshake and encrypted
+  packet transport
+- `SshIoClientFactory` for building a live `SshClient` with protocol-backed
+  auth, channels, shell/exec, SFTP, and forwarding services
 
 ## Suggested implementation order
 
