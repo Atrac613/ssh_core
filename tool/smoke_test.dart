@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
+import 'package:pinenacl/ed25519.dart';
 import 'package:ssh_core/ssh_core_io.dart';
 
 Future<void> main() async {
@@ -280,6 +280,90 @@ Future<void> _exerciseTransportPrimitives() async {
   );
   assert(exchangeHashSharedSecret == BigInt.from(0x123456));
   exchangeHashReader.expectDone();
+
+  final SigningKey signingKey = SigningKey.generate();
+  final SshHostKey verifiedHostKey = SshHostKey.decode(
+    (SshPayloadWriter()
+          ..writeString(sshEd25519HostKeyAlgorithm)
+          ..writeStringBytes(signingKey.verifyKey.asTypedList))
+        .toBytes(),
+  );
+  final SshCurve25519KeyPair clientKeyPair = SshCurve25519KeyPair.generate();
+  final SshCurve25519KeyPair serverKeyPair = SshCurve25519KeyPair.generate();
+  final BigInt clientSharedSecret = clientKeyPair.computeSharedSecret(
+    serverKeyPair.publicKey,
+  );
+  final BigInt serverSharedSecret = serverKeyPair.computeSharedSecret(
+    clientKeyPair.publicKey,
+  );
+  assert(clientSharedSecret == serverSharedSecret);
+
+  final Uint8List exchangeHash =
+      const SshExchangeHashComputer().sha256FromInput(
+    SshKexEcdhExchangeHashInput(
+      clientIdentification: 'SSH-2.0-ssh_core-client',
+      serverIdentification: 'SSH-2.0-ssh_core-server',
+      clientKexInitPayload: kexInit.encodePayload(),
+      serverKexInitPayload: decodedKexInit.encodePayload(),
+      hostKey: verifiedHostKey,
+      clientEphemeralPublicKey: clientKeyPair.publicKey,
+      serverEphemeralPublicKey: serverKeyPair.publicKey,
+      sharedSecret: clientSharedSecret,
+    ),
+  );
+  final SshSignature exchangeHashSignature = SshSignature(
+    algorithm: sshEd25519HostKeyAlgorithm,
+    blob: signingKey.sign(exchangeHash).signature.asTypedList,
+  );
+  assert(
+    const SshHostKeySignatureVerifier().verifyExchangeHash(
+      hostKey: verifiedHostKey,
+      signature: exchangeHashSignature,
+      exchangeHash: exchangeHash,
+    ),
+  );
+
+  final SshDerivedKeys derivedKeys = const SshKeyDerivation().deriveSha256(
+    context: SshKeyDerivationContext(
+      sharedSecret: clientSharedSecret,
+      exchangeHash: exchangeHash,
+      sessionIdentifier: exchangeHash,
+    ),
+    ivLength: 16,
+    encryptionKeyLength: 16,
+    integrityKeyLength: 32,
+  );
+  assert(derivedKeys.initialIvClientToServer.length == 16);
+  assert(derivedKeys.encryptionKeyServerToClient.length == 16);
+  assert(derivedKeys.integrityKeyClientToServer.length == 32);
+  assert(
+    !_sameBytes(
+      derivedKeys.encryptionKeyClientToServer,
+      derivedKeys.encryptionKeyServerToClient,
+    ),
+  );
+
+  final SshAesCtrHmacPacketWriterState protectedWriter =
+      SshAesCtrHmacPacketWriterState(
+    encryptionKey: derivedKeys.encryptionKeyClientToServer,
+    initialVector: derivedKeys.initialIvClientToServer,
+    macKey: derivedKeys.integrityKeyClientToServer,
+  );
+  final SshAesCtrHmacPacketReaderState protectedReader =
+      SshAesCtrHmacPacketReaderState(
+    encryptionKey: derivedKeys.encryptionKeyClientToServer,
+    initialVector: derivedKeys.initialIvClientToServer,
+    macKey: derivedKeys.integrityKeyClientToServer,
+    macAlgorithm: sshHmacSha256Mac,
+  );
+  final Uint8List protectedFrame = protectedWriter.encode(
+    <int>[SshMessageId.newKeys.value],
+  );
+  final SshBinaryPacket? protectedPacket = protectedReader.tryRead(
+    protectedFrame,
+  );
+  assert(protectedPacket != null);
+  assert(protectedPacket!.messageId == SshMessageId.newKeys.value);
 
   final SshNewKeysMessage newKeys = const SshNewKeysMessage();
   final SshNewKeysMessage decodedNewKeys = SshNewKeysMessage.decodePayload(

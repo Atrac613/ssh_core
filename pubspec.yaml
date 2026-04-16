@@ -10,3 +10,8 @@ topics:
   - ssh
   - sftp
   - networking
+
+dependencies:
+  crypto: ^3.0.5
+  pinenacl: ^0.6.0
+  pointycastle: ^3.9.1
