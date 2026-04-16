@@ -2,6 +2,7 @@ library ssh_core;
 
 export 'src/auth/auth.dart';
 export 'src/auth/protocol.dart';
+export 'src/auth/protocol_authenticator.dart';
 export 'src/channels/channel.dart';
 export 'src/core/client.dart';
 export 'src/core/config.dart';

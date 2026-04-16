@@ -16,6 +16,7 @@ Implemented in this scaffold:
 - `SshClient` orchestration and connection state management
 - transport, auth, channel, session, PTY, exec, SFTP, and forwarding contracts
 - auth service and userauth packet helpers for protocol flows
+- protocol authenticator for `none`, `password`, and keyboard-interactive
 - transport payload/message codec and `SSH_MSG_KEXINIT` helper
 - transport algorithm negotiation for client/server `KEXINIT` proposals
 - host key parsing and verifier contracts for the pre-auth handshake

@@ -8,6 +8,7 @@ import 'package:ssh_core/ssh_core_io.dart';
 Future<void> main() async {
   await _exerciseTransportPrimitives();
   await _exerciseAuthProtocol();
+  await _exerciseProtocolAuthenticator();
   await _exerciseHostKeyVerification();
   await _exerciseSocketTransport();
 
@@ -428,6 +429,92 @@ Future<void> _exerciseAuthProtocol() async {
   assert(decodedInfoResponse.responses.single == '123456');
 }
 
+Future<void> _exerciseProtocolAuthenticator() async {
+  final SshUserAuthProtocolAuthenticator authenticator =
+      const SshUserAuthProtocolAuthenticator();
+  final _ScriptedPacketTransport passwordTransport = _ScriptedPacketTransport(
+    scriptedPackets: <List<int>>[
+      SshServiceAcceptMessage(serviceName: sshUserauthService).encodePayload(),
+      SshUserAuthFailureMessage(
+        allowedMethods: const <String>['password'],
+      ).encodePayload(),
+      const SshUserAuthSuccessMessage().encodePayload(),
+    ],
+  );
+  final SshAuthResult passwordResult = await authenticator.authenticate(
+    context: SshAuthContext(
+      config: const SshClientConfig(host: 'localhost', username: 'tester'),
+      transport: passwordTransport,
+      handshake: const SshHandshakeInfo(
+        localIdentification: 'SSH-2.0-ssh_core-test',
+        remoteIdentification: 'SSH-2.0-demo-server',
+      ),
+    ),
+    methods: const <SshAuthMethod>[
+      SshNoneAuthMethod(),
+      SshPasswordAuthMethod(password: 'pw'),
+    ],
+  );
+  assert(passwordResult.isSuccess);
+  assert(passwordTransport.writtenPayloads.length == 3);
+  final SshServiceRequestMessage authServiceRequest =
+      SshServiceRequestMessage.decodePayload(
+          passwordTransport.writtenPayloads[0]);
+  assert(authServiceRequest.serviceName == sshUserauthService);
+  final SshUserAuthRequestMessage noneRequest =
+      SshUserAuthRequestMessage.decodePayload(
+          passwordTransport.writtenPayloads[1]);
+  assert(noneRequest.methodName == 'none');
+  final SshUserAuthRequestMessage passwordRequest =
+      SshUserAuthRequestMessage.decodePayload(
+          passwordTransport.writtenPayloads[2]);
+  assert(passwordRequest.methodName == 'password');
+
+  final _ScriptedPacketTransport keyboardInteractiveTransport =
+      _ScriptedPacketTransport(
+    scriptedPackets: <List<int>>[
+      SshServiceAcceptMessage(serviceName: sshUserauthService).encodePayload(),
+      SshUserAuthInfoRequestMessage(
+        prompts: const <SshKeyboardInteractivePrompt>[
+          SshKeyboardInteractivePrompt(prompt: 'Code: ', echo: false),
+        ],
+      ).encodePayload(),
+      const SshUserAuthSuccessMessage().encodePayload(),
+    ],
+  );
+  final SshAuthResult keyboardInteractiveResult =
+      await authenticator.authenticate(
+    context: SshAuthContext(
+      config: const SshClientConfig(host: 'localhost', username: 'tester'),
+      transport: keyboardInteractiveTransport,
+      handshake: const SshHandshakeInfo(
+        localIdentification: 'SSH-2.0-ssh_core-test',
+        remoteIdentification: 'SSH-2.0-demo-server',
+      ),
+    ),
+    methods: <SshAuthMethod>[
+      SshKeyboardInteractiveAuthMethod(
+        respond: (List<SshKeyboardInteractivePrompt> prompts) async {
+          assert(prompts.single.prompt == 'Code: ');
+          return const <String>['123456'];
+        },
+      ),
+    ],
+  );
+  assert(keyboardInteractiveResult.isSuccess);
+  assert(keyboardInteractiveTransport.writtenPayloads.length == 3);
+  final SshUserAuthRequestMessage keyboardInteractiveRequest =
+      SshUserAuthRequestMessage.decodePayload(
+    keyboardInteractiveTransport.writtenPayloads[1],
+  );
+  assert(keyboardInteractiveRequest.methodName == 'keyboard-interactive');
+  final SshUserAuthInfoResponseMessage infoResponse =
+      SshUserAuthInfoResponseMessage.decodePayload(
+    keyboardInteractiveTransport.writtenPayloads[2],
+  );
+  assert(infoResponse.responses.single == '123456');
+}
+
 Future<void> _exerciseHostKeyVerification() async {
   final SshHostKey hostKey = _testHostKey();
   assert(hostKey.algorithm == 'ssh-ed25519');
@@ -599,6 +686,55 @@ bool _sameBytes(List<int> left, List<int> right) {
   }
 
   return true;
+}
+
+class _ScriptedPacketTransport implements SshPacketTransport {
+  _ScriptedPacketTransport({required List<List<int>> scriptedPackets})
+      : _scriptedPackets = List<List<int>>.from(scriptedPackets);
+
+  final List<List<int>> _scriptedPackets;
+  final List<List<int>> writtenPayloads = <List<int>>[];
+
+  @override
+  SshTransportState get state => SshTransportState.connected;
+
+  @override
+  Future<SshHandshakeInfo> connect({
+    required SshEndpoint endpoint,
+    required SshTransportSettings settings,
+  }) async {
+    return const SshHandshakeInfo(
+      localIdentification: 'SSH-2.0-ssh_core-test',
+      remoteIdentification: 'SSH-2.0-scripted-server',
+    );
+  }
+
+  @override
+  Future<void> disconnect() async {}
+
+  @override
+  Future<SshBinaryPacket> readPacket() async {
+    if (_scriptedPackets.isEmpty) {
+      throw StateError('No scripted SSH packet remains.');
+    }
+
+    return SshBinaryPacket(
+        payload: _scriptedPackets.removeAt(0),
+        padding: const <int>[0, 0, 0, 0]);
+  }
+
+  @override
+  Future<void> sendGlobalRequest(SshGlobalRequest request) async {}
+
+  @override
+  Future<void> writeBytes(List<int> bytes) async {
+    writtenPayloads.add(List<int>.from(bytes));
+  }
+
+  @override
+  Future<void> writePacket(List<int> payload) async {
+    writtenPayloads.add(List<int>.from(payload));
+  }
 }
 
 SshHostKey _testHostKey() {
