@@ -7,6 +7,8 @@ const String sshRsaHostKeyType = 'ssh-rsa';
 const String sshRsaSha256HostKeyAlgorithm = 'rsa-sha2-256';
 const String sshRsaSha512HostKeyAlgorithm = 'rsa-sha2-512';
 const String sshEcdsaSha2Nistp256HostKeyAlgorithm = 'ecdsa-sha2-nistp256';
+const String sshEcdsaSha2Nistp384HostKeyAlgorithm = 'ecdsa-sha2-nistp384';
+const String sshEcdsaSha2Nistp521HostKeyAlgorithm = 'ecdsa-sha2-nistp521';
 const String sshAes128CtrCipher = 'aes128-ctr';
 const String sshAes192CtrCipher = 'aes192-ctr';
 const String sshAes256CtrCipher = 'aes256-ctr';
@@ -101,6 +103,8 @@ final class SshTransportAlgorithms {
 
   static const List<String> defaultServerHostKeyAlgorithms = <String>[
     sshEd25519HostKeyAlgorithm,
+    sshEcdsaSha2Nistp521HostKeyAlgorithm,
+    sshEcdsaSha2Nistp384HostKeyAlgorithm,
     sshEcdsaSha2Nistp256HostKeyAlgorithm,
     sshRsaSha512HostKeyAlgorithm,
     sshRsaSha256HostKeyAlgorithm,
@@ -154,6 +158,18 @@ final class SshTransportAlgorithms {
       hostKeyType: sshEcdsaSha2Nistp256HostKeyAlgorithm,
       curveName: 'nistp256',
       digestName: 'sha256',
+    ),
+    sshEcdsaSha2Nistp384HostKeyAlgorithm: SshHostKeyAlgorithm(
+      name: sshEcdsaSha2Nistp384HostKeyAlgorithm,
+      hostKeyType: sshEcdsaSha2Nistp384HostKeyAlgorithm,
+      curveName: 'nistp384',
+      digestName: 'sha384',
+    ),
+    sshEcdsaSha2Nistp521HostKeyAlgorithm: SshHostKeyAlgorithm(
+      name: sshEcdsaSha2Nistp521HostKeyAlgorithm,
+      hostKeyType: sshEcdsaSha2Nistp521HostKeyAlgorithm,
+      curveName: 'nistp521',
+      digestName: 'sha512',
     ),
   };
 

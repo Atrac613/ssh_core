@@ -396,6 +396,10 @@ ECDomainParameters _ecdsaCurveForName(String curveName) {
   switch (curveName) {
     case 'nistp256':
       return ECCurve_secp256r1();
+    case 'nistp384':
+      return ECCurve_secp384r1();
+    case 'nistp521':
+      return ECCurve_secp521r1();
   }
 
   throw SshTransportCryptoException(
@@ -407,6 +411,10 @@ Digest _ecdsaDigestForCurve(String curveName) {
   switch (curveName) {
     case 'nistp256':
       return SHA256Digest();
+    case 'nistp384':
+      return SHA384Digest();
+    case 'nistp521':
+      return SHA512Digest();
   }
 
   throw SshTransportCryptoException(

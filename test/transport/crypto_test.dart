@@ -42,41 +42,38 @@ void main() {
   });
 
   test('verifies ecdsa-sha2-nistp256 exchange hash signatures', () {
-    final Uint8List exchangeHash = Uint8List.fromList(
-      List<int>.generate(32, (int index) => 255 - index),
-    );
-    final _GeneratedEcdsaKeyPair keyPair = _generateEcdsaKeyPair();
-    final SshHostKey hostKey = SshHostKey.decode(
-      (SshPayloadWriter()
-            ..writeString(sshEcdsaSha2Nistp256HostKeyAlgorithm)
-            ..writeString('nistp256')
-            ..writeStringBytes(keyPair.publicKey.Q!.getEncoded(false)))
-          .toBytes(),
-    );
-    final pc.ECDSASigner signer =
-        pc.Signer('SHA-256/DET-ECDSA') as pc.ECDSASigner
-          ..init(
-            true,
-            pc.PrivateKeyParameter<pc.ECPrivateKey>(keyPair.privateKey),
-          );
-    final pc.ECSignature signatureValue =
-        signer.generateSignature(exchangeHash) as pc.ECSignature;
-    final SshSignature signature = SshSignature(
-      algorithm: sshEcdsaSha2Nistp256HostKeyAlgorithm,
-      blob: (SshPayloadWriter()
-            ..writeMpInt(signatureValue.r)
-            ..writeMpInt(signatureValue.s))
-          .toBytes(),
-    );
-
-    expect(
-      const SshHostKeySignatureVerifier().verifyExchangeHash(
-        hostKey: hostKey,
-        signature: signature,
-        exchangeHash: exchangeHash,
-        negotiatedHostKeyAlgorithm: sshEcdsaSha2Nistp256HostKeyAlgorithm,
+    _expectEcdsaVerification(
+      exchangeHash: Uint8List.fromList(
+        List<int>.generate(32, (int index) => 255 - index),
       ),
-      isTrue,
+      algorithm: sshEcdsaSha2Nistp256HostKeyAlgorithm,
+      curveName: 'nistp256',
+      domainParameters: pc.ECCurve_secp256r1(),
+      signerName: 'SHA-256/DET-ECDSA',
+    );
+  });
+
+  test('verifies ecdsa-sha2-nistp384 exchange hash signatures', () {
+    _expectEcdsaVerification(
+      exchangeHash: Uint8List.fromList(
+        List<int>.generate(48, (int index) => (index * 3) & 0xFF),
+      ),
+      algorithm: sshEcdsaSha2Nistp384HostKeyAlgorithm,
+      curveName: 'nistp384',
+      domainParameters: pc.ECCurve_secp384r1(),
+      signerName: 'SHA-384/DET-ECDSA',
+    );
+  });
+
+  test('verifies ecdsa-sha2-nistp521 exchange hash signatures', () {
+    _expectEcdsaVerification(
+      exchangeHash: Uint8List.fromList(
+        List<int>.generate(64, (int index) => 255 - ((index * 5) & 0xFF)),
+      ),
+      algorithm: sshEcdsaSha2Nistp521HostKeyAlgorithm,
+      curveName: 'nistp521',
+      domainParameters: pc.ECCurve_secp521r1(),
+      signerName: 'SHA-512/DET-ECDSA',
     );
   });
 
@@ -184,10 +181,12 @@ _GeneratedRsaKeyPair _generateRsaKeyPair() {
   );
 }
 
-_GeneratedEcdsaKeyPair _generateEcdsaKeyPair() {
-  final pc.ECDomainParameters curve = pc.ECCurve_secp256r1();
+_GeneratedEcdsaKeyPair _generateEcdsaKeyPairForCurve(
+  pc.ECDomainParameters curve,
+  List<int> seed,
+) {
   final pc.FortunaRandom random = _seededRandom(
-    List<int>.generate(32, (int index) => 32 - index),
+    seed,
   );
   final pc.ECKeyGenerator generator = pc.ECKeyGenerator()
     ..init(
@@ -201,6 +200,51 @@ _GeneratedEcdsaKeyPair _generateEcdsaKeyPair() {
   return _GeneratedEcdsaKeyPair(
     publicKey: pair.publicKey as pc.ECPublicKey,
     privateKey: pair.privateKey as pc.ECPrivateKey,
+  );
+}
+
+void _expectEcdsaVerification({
+  required Uint8List exchangeHash,
+  required String algorithm,
+  required String curveName,
+  required pc.ECDomainParameters domainParameters,
+  required String signerName,
+}) {
+  final _GeneratedEcdsaKeyPair keyPair = _generateEcdsaKeyPairForCurve(
+    domainParameters,
+    List<int>.generate(
+        32, (int index) => (curveName.codeUnitAt(0) + index) & 0xFF),
+  );
+  final SshHostKey hostKey = SshHostKey.decode(
+    (SshPayloadWriter()
+          ..writeString(algorithm)
+          ..writeString(curveName)
+          ..writeStringBytes(keyPair.publicKey.Q!.getEncoded(false)))
+        .toBytes(),
+  );
+  final pc.ECDSASigner signer = pc.Signer(signerName) as pc.ECDSASigner
+    ..init(
+      true,
+      pc.PrivateKeyParameter<pc.ECPrivateKey>(keyPair.privateKey),
+    );
+  final pc.ECSignature signatureValue =
+      signer.generateSignature(exchangeHash) as pc.ECSignature;
+  final SshSignature signature = SshSignature(
+    algorithm: algorithm,
+    blob: (SshPayloadWriter()
+          ..writeMpInt(signatureValue.r)
+          ..writeMpInt(signatureValue.s))
+        .toBytes(),
+  );
+
+  expect(
+    const SshHostKeySignatureVerifier().verifyExchangeHash(
+      hostKey: hostKey,
+      signature: signature,
+      exchangeHash: exchangeHash,
+      negotiatedHostKeyAlgorithm: algorithm,
+    ),
+    isTrue,
   );
 }
 
