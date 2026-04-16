@@ -53,15 +53,21 @@ Future<void> main() async {
 }
 
 void _exerciseTransportPrimitives() {
-  final SshLineReader lineReader = SshLineReader();
-  lineReader.add(
+  final SshPacketCodec codec = SshPacketCodec(
+    paddingBytesFactory: (int length) =>
+        List<int>.generate(length, (int i) => i),
+  );
+  final SshTransportBuffer transportBuffer = SshTransportBuffer(
+    packetCodec: codec,
+  );
+  transportBuffer.add(
     utf8.encode(
         'prelude one\r\nprelude two\r\nSSH-2.0-demo-server integration\r\n'),
   );
 
   final List<String> remoteLines = <String>[];
   for (;;) {
-    final String? line = lineReader.readLine();
+    final String? line = transportBuffer.readLine();
     if (line == null) {
       break;
     }
@@ -69,7 +75,7 @@ void _exerciseTransportPrimitives() {
   }
 
   assert(remoteLines.length == 3);
-  assert(lineReader.pendingByteCount == 0);
+  assert(transportBuffer.pendingByteCount == 0);
 
   final SshBannerExchange bannerExchange = const SshBannerExchange();
   final SshBannerExchangeResult exchange = bannerExchange.resolve(
@@ -85,30 +91,25 @@ void _exerciseTransportPrimitives() {
         'SSH-2.0-ssh_core-test\r\n',
   );
 
-  final SshPacketCodec codec = SshPacketCodec(
-    paddingBytesFactory: (int length) =>
-        List<int>.generate(length, (int i) => i),
-  );
   final Uint8List frame = codec.encode(<int>[94, 1, 2, 3]);
-  final SshPacketReader reader = SshPacketReader(codec: codec);
 
-  reader.add(frame.sublist(0, 3));
-  assert(reader.read() == null);
-  reader.add(frame.sublist(3));
+  transportBuffer.add(frame.sublist(0, 3));
+  assert(transportBuffer.readPacket() == null);
+  transportBuffer.add(frame.sublist(3));
 
-  final SshBinaryPacket? packet = reader.read();
+  final SshBinaryPacket? packet = transportBuffer.readPacket();
   assert(packet != null);
   final SshBinaryPacket decodedPacket = packet!;
   assert(decodedPacket.messageId == 94);
   assert(decodedPacket.payload.length == 4);
   assert(decodedPacket.padding.length >= 4);
-  assert(reader.pendingByteCount == 0);
+  assert(transportBuffer.pendingByteCount == 0);
 }
 
 class _FakeTransport implements SshTransport {
   SshTransportState _state = SshTransportState.disconnected;
   final SshBannerExchange _bannerExchange = const SshBannerExchange();
-  final SshLineReader _lineReader = SshLineReader();
+  final SshTransportBuffer _transportBuffer = SshTransportBuffer();
 
   @override
   SshTransportState get state => _state;
@@ -119,13 +120,13 @@ class _FakeTransport implements SshTransport {
     required SshTransportSettings settings,
   }) async {
     _state = SshTransportState.connected;
-    _lineReader.add(
+    _transportBuffer.add(
       utf8.encode('fake daemon boot message\r\nSSH-2.0-fake\r\n'),
     );
 
     final List<String> remoteLines = <String>[];
     for (;;) {
-      final String? line = _lineReader.readLine();
+      final String? line = _transportBuffer.readLine();
       if (line == null) {
         break;
       }

@@ -221,9 +221,13 @@ class SshBannerExchange {
 
 typedef SshPaddingBytesFactory = List<int> Function(int length);
 
-class SshLineReader {
-  SshLineReader({this.maxLineLength = 255}) : assert(maxLineLength > 0);
+class SshTransportBuffer {
+  SshTransportBuffer({
+    this.packetCodec = const SshPacketCodec(),
+    this.maxLineLength = 255,
+  }) : assert(maxLineLength > 0);
 
+  final SshPacketCodec packetCodec;
   final int maxLineLength;
   final List<int> _buffer = <int>[];
 
@@ -231,17 +235,23 @@ class SshLineReader {
 
   void add(List<int> bytes) {
     _buffer.addAll(bytes);
-    if (_buffer.length > maxLineLength && !_buffer.contains(10)) {
-      throw FormatException(
-        'SSH line reader exceeded the maximum line length of $maxLineLength.',
-      );
-    }
   }
 
   String? readLine() {
     final int lineFeedIndex = _buffer.indexOf(10);
     if (lineFeedIndex < 0) {
+      if (_buffer.length > maxLineLength) {
+        throw FormatException(
+          'SSH line reader exceeded the maximum line length of $maxLineLength.',
+        );
+      }
       return null;
+    }
+
+    if (lineFeedIndex + 1 > maxLineLength) {
+      throw FormatException(
+        'SSH line reader exceeded the maximum line length of $maxLineLength.',
+      );
     }
 
     final int contentEnd = lineFeedIndex > 0 && _buffer[lineFeedIndex - 1] == 13
@@ -250,14 +260,41 @@ class SshLineReader {
     final List<int> lineBytes = _buffer.sublist(0, contentEnd);
     _buffer.removeRange(0, lineFeedIndex + 1);
 
-    if (lineBytes.length + 2 > maxLineLength) {
-      throw FormatException(
-        'SSH line reader exceeded the maximum line length of $maxLineLength.',
-      );
-    }
-
     return utf8.decode(lineBytes);
   }
+
+  SshBinaryPacket? readPacket() {
+    if (_buffer.length < 5) {
+      return null;
+    }
+
+    final int packetLength = _readUint32(_buffer, 0);
+    final int frameLength = packetLength + 4;
+    if (_buffer.length < frameLength) {
+      return null;
+    }
+
+    final List<int> frame = _buffer.sublist(0, frameLength);
+    _buffer.removeRange(0, frameLength);
+    return packetCodec.decode(frame);
+  }
+}
+
+class SshLineReader {
+  SshLineReader({int maxLineLength = 255})
+      : _buffer = SshTransportBuffer(maxLineLength: maxLineLength);
+
+  final SshTransportBuffer _buffer;
+
+  int get maxLineLength => _buffer.maxLineLength;
+
+  int get pendingByteCount => _buffer.pendingByteCount;
+
+  void add(List<int> bytes) {
+    _buffer.add(bytes);
+  }
+
+  String? readLine() => _buffer.readLine();
 }
 
 class SshBinaryPacket {
@@ -376,32 +413,20 @@ class SshPacketCodec {
 }
 
 class SshPacketReader {
-  SshPacketReader({this.codec = const SshPacketCodec()});
+  SshPacketReader({SshPacketCodec codec = const SshPacketCodec()})
+      : _buffer = SshTransportBuffer(packetCodec: codec);
 
-  final SshPacketCodec codec;
-  final List<int> _buffer = <int>[];
+  final SshTransportBuffer _buffer;
 
-  int get pendingByteCount => _buffer.length;
+  SshPacketCodec get codec => _buffer.packetCodec;
+
+  int get pendingByteCount => _buffer.pendingByteCount;
 
   void add(List<int> bytes) {
-    _buffer.addAll(bytes);
+    _buffer.add(bytes);
   }
 
-  SshBinaryPacket? read() {
-    if (_buffer.length < 5) {
-      return null;
-    }
-
-    final int packetLength = _readUint32(_buffer, 0);
-    final int frameLength = packetLength + 4;
-    if (_buffer.length < frameLength) {
-      return null;
-    }
-
-    final List<int> frame = _buffer.sublist(0, frameLength);
-    _buffer.removeRange(0, frameLength);
-    return codec.decode(frame);
-  }
+  SshBinaryPacket? read() => _buffer.readPacket();
 }
 
 List<int> _zeroPadding(int length) => List<int>.filled(length, 0);
