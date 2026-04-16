@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'transport.dart';
 
-class SshSocketTransport implements SshTransport {
+class SshSocketTransport implements SshPacketTransport {
   SshSocketTransport({
     this.bannerExchange = const SshBannerExchange(),
     this.packetCodec = const SshPacketCodec(),

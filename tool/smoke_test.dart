@@ -424,6 +424,7 @@ Future<void> _exerciseSocketTransport() async {
   final SshSocketTransport transport = SshSocketTransport(
     packetCodec: codec,
   );
+  final SshPacketTransport packetTransport = transport;
   final SshHandshakeInfo handshake = await transport.connect(
     endpoint: SshEndpoint(
         host: InternetAddress.loopbackIPv4.address, port: server.port),
@@ -434,8 +435,8 @@ Future<void> _exerciseSocketTransport() async {
 
   assert(handshake.remoteIdentification == 'SSH-2.0-ssh_core-test-server');
 
-  await transport.writePacket(utf8.encode('ping'));
-  final SshBinaryPacket reply = await transport.readPacket();
+  await packetTransport.writePacket(utf8.encode('ping'));
+  final SshBinaryPacket reply = await packetTransport.readPacket();
   assert(utf8.decode(reply.payload) == 'pong');
 
   await transport.disconnect();

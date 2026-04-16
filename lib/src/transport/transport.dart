@@ -77,6 +77,14 @@ abstract class SshTransport {
   Future<void> disconnect();
 }
 
+abstract class SshPacketTransport implements SshTransport {
+  Future<SshBinaryPacket> readPacket();
+
+  Future<void> writePacket(List<int> payload);
+
+  Future<void> writeBytes(List<int> bytes);
+}
+
 class SshTransportBanner {
   SshTransportBanner({
     required this.protocolVersion,

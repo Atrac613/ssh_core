@@ -95,6 +95,7 @@ handshake steps:
 - `SshTransportBanner` and `SshBannerExchange` for SSH identification strings
 - `SshTransportBuffer` for mixed line and packet reads from one byte stream
 - `SshTransportStream` for async banner and packet I/O over byte streams
+- `SshPacketTransport` for modules that need packet-level SSH access
 - `SshSocketTransport` in `package:ssh_core/ssh_core_io.dart`
 - `SshPayloadWriter`, `SshPayloadReader`, `mpint`, and `SshKexInitMessage`
 - `SshHostKey`, `SshHostKeyVerifier`, and `SshStaticHostKeyVerifier`
