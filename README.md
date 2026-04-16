@@ -18,6 +18,7 @@ Implemented in this scaffold:
 - transport payload/message codec and `SSH_MSG_KEXINIT` helper
 - transport algorithm negotiation for client/server `KEXINIT` proposals
 - host key parsing and verifier contracts for the pre-auth handshake
+- ECDH key exchange message and exchange-hash input helpers
 - transport banner parsing/exchange helpers and binary packet framing helpers
 - a smoke test that exercises the package with fake implementations
 - example wiring showing how a concrete implementation can plug into the stack
@@ -93,9 +94,9 @@ handshake steps:
 - `SshTransportBuffer` for mixed line and packet reads from one byte stream
 - `SshTransportStream` for async banner and packet I/O over byte streams
 - `SshSocketTransport` in `package:ssh_core/ssh_core_io.dart`
-- `SshPayloadWriter`, `SshPayloadReader`, and `SshKexInitMessage`
+- `SshPayloadWriter`, `SshPayloadReader`, `mpint`, and `SshKexInitMessage`
 - `SshHostKey`, `SshHostKeyVerifier`, and `SshStaticHostKeyVerifier`
-- `SshAlgorithmNegotiator` and `SshNegotiatedAlgorithms`
+- `SshAlgorithmNegotiator`, `SshNegotiatedAlgorithms`, and ECDH KEX helpers
 - `SshLineReader` for chunked banner line parsing from socket bytes
 - `SshPacketCodec` for SSH binary packet framing
 - `SshPacketReader` for reading framed packets from chunked byte streams

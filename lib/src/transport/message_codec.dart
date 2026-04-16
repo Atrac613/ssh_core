@@ -8,6 +8,8 @@ enum SshMessageId {
   serviceAccept(6),
   kexInit(20),
   newKeys(21),
+  kexEcdhInit(30),
+  kexEcdhReply(31),
   userauthRequest(50),
   userauthFailure(51),
   userauthSuccess(52),
@@ -63,6 +65,10 @@ class SshPayloadWriter {
     }
 
     writeString(names.join(','));
+  }
+
+  void writeMpInt(BigInt value) {
+    writeStringBytes(_encodeMpInt(value));
   }
 
   Uint8List toBytes() => _builder.takeBytes();
@@ -122,6 +128,10 @@ class SshPayloadReader {
     return value.split(',');
   }
 
+  BigInt readMpInt() {
+    return _decodeMpInt(readStringBytes());
+  }
+
   void expectDone() {
     if (!isDone) {
       throw FormatException(
@@ -138,6 +148,58 @@ class SshPayloadReader {
       );
     }
   }
+}
+
+Uint8List _encodeMpInt(BigInt value) {
+  if (value == BigInt.zero) {
+    return Uint8List(0);
+  }
+
+  if (value.isNegative) {
+    int byteLength = 1;
+    while (value < -(BigInt.one << (byteLength * 8 - 1))) {
+      byteLength += 1;
+    }
+
+    BigInt encodedValue = (BigInt.one << (byteLength * 8)) + value;
+    final Uint8List encodedBytes = Uint8List(byteLength);
+    for (int index = byteLength - 1; index >= 0; index -= 1) {
+      encodedBytes[index] = (encodedValue & BigInt.from(0xFF)).toInt();
+      encodedValue = encodedValue >> 8;
+    }
+    return encodedBytes;
+  }
+
+  BigInt remaining = value;
+  final List<int> magnitudeBytes = <int>[];
+  while (remaining > BigInt.zero) {
+    magnitudeBytes.add((remaining & BigInt.from(0xFF)).toInt());
+    remaining = remaining >> 8;
+  }
+
+  final List<int> encodedBytes = magnitudeBytes.reversed.toList(growable: true);
+  if ((encodedBytes.first & 0x80) != 0) {
+    encodedBytes.insert(0, 0);
+  }
+
+  return Uint8List.fromList(encodedBytes);
+}
+
+BigInt _decodeMpInt(Uint8List encodedBytes) {
+  if (encodedBytes.isEmpty) {
+    return BigInt.zero;
+  }
+
+  BigInt value = BigInt.zero;
+  for (final int byte in encodedBytes) {
+    value = (value << 8) | BigInt.from(byte);
+  }
+
+  if ((encodedBytes.first & 0x80) == 0) {
+    return value;
+  }
+
+  return value - (BigInt.one << (encodedBytes.length * 8));
 }
 
 class SshKexInitMessage {

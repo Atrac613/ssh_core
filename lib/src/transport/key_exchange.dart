@@ -1,3 +1,6 @@
+import 'dart:typed_data';
+
+import 'host_key.dart';
 import 'message_codec.dart';
 
 class SshAlgorithmNegotiationException implements Exception {
@@ -196,5 +199,116 @@ class SshAlgorithmNegotiator {
 
     return senderProposal.kexAlgorithms.first != selectedKeyExchange ||
         senderProposal.serverHostKeyAlgorithms.first != selectedServerHostKey;
+  }
+}
+
+class SshKexEcdhInitMessage {
+  SshKexEcdhInitMessage({
+    required List<int> clientEphemeralPublicKey,
+  }) : clientEphemeralPublicKey = Uint8List.fromList(clientEphemeralPublicKey);
+
+  factory SshKexEcdhInitMessage.decodePayload(List<int> payload) {
+    final SshPayloadReader reader = SshPayloadReader(payload);
+    final int messageId = reader.readByte();
+    if (messageId != SshMessageId.kexEcdhInit.value) {
+      throw FormatException(
+        'Expected SSH_MSG_KEX_ECDH_INIT (${SshMessageId.kexEcdhInit.value}), '
+        'received $messageId.',
+      );
+    }
+
+    final SshKexEcdhInitMessage message = SshKexEcdhInitMessage(
+      clientEphemeralPublicKey: reader.readStringBytes(),
+    );
+    reader.expectDone();
+    return message;
+  }
+
+  final Uint8List clientEphemeralPublicKey;
+
+  Uint8List encodePayload() {
+    final SshPayloadWriter writer = SshPayloadWriter()
+      ..writeByte(SshMessageId.kexEcdhInit.value)
+      ..writeStringBytes(clientEphemeralPublicKey);
+    return writer.toBytes();
+  }
+}
+
+class SshKexEcdhReplyMessage {
+  SshKexEcdhReplyMessage({
+    required this.hostKey,
+    required List<int> serverEphemeralPublicKey,
+    required List<int> exchangeHashSignature,
+  })  : serverEphemeralPublicKey = Uint8List.fromList(serverEphemeralPublicKey),
+        exchangeHashSignature = Uint8List.fromList(exchangeHashSignature);
+
+  factory SshKexEcdhReplyMessage.decodePayload(List<int> payload) {
+    final SshPayloadReader reader = SshPayloadReader(payload);
+    final int messageId = reader.readByte();
+    if (messageId != SshMessageId.kexEcdhReply.value) {
+      throw FormatException(
+        'Expected SSH_MSG_KEX_ECDH_REPLY '
+        '(${SshMessageId.kexEcdhReply.value}), received $messageId.',
+      );
+    }
+
+    final SshKexEcdhReplyMessage message = SshKexEcdhReplyMessage(
+      hostKey: SshHostKey.decode(reader.readStringBytes()),
+      serverEphemeralPublicKey: reader.readStringBytes(),
+      exchangeHashSignature: reader.readStringBytes(),
+    );
+    reader.expectDone();
+    return message;
+  }
+
+  final SshHostKey hostKey;
+  final Uint8List serverEphemeralPublicKey;
+  final Uint8List exchangeHashSignature;
+
+  Uint8List encodePayload() {
+    final SshPayloadWriter writer = SshPayloadWriter()
+      ..writeByte(SshMessageId.kexEcdhReply.value)
+      ..writeStringBytes(hostKey.encodedBytes)
+      ..writeStringBytes(serverEphemeralPublicKey)
+      ..writeStringBytes(exchangeHashSignature);
+    return writer.toBytes();
+  }
+}
+
+class SshKexEcdhExchangeHashInput {
+  SshKexEcdhExchangeHashInput({
+    required this.clientIdentification,
+    required this.serverIdentification,
+    required List<int> clientKexInitPayload,
+    required List<int> serverKexInitPayload,
+    required this.hostKey,
+    required List<int> clientEphemeralPublicKey,
+    required List<int> serverEphemeralPublicKey,
+    required this.sharedSecret,
+  })  : clientKexInitPayload = Uint8List.fromList(clientKexInitPayload),
+        serverKexInitPayload = Uint8List.fromList(serverKexInitPayload),
+        clientEphemeralPublicKey = Uint8List.fromList(clientEphemeralPublicKey),
+        serverEphemeralPublicKey = Uint8List.fromList(serverEphemeralPublicKey);
+
+  final String clientIdentification;
+  final String serverIdentification;
+  final Uint8List clientKexInitPayload;
+  final Uint8List serverKexInitPayload;
+  final SshHostKey hostKey;
+  final Uint8List clientEphemeralPublicKey;
+  final Uint8List serverEphemeralPublicKey;
+  final BigInt sharedSecret;
+
+  Uint8List encode() {
+    final SshPayloadWriter writer = SshPayloadWriter()
+      ..writeString(clientIdentification)
+      ..writeString(serverIdentification)
+      ..writeStringBytes(clientKexInitPayload)
+      ..writeStringBytes(serverKexInitPayload)
+      ..writeStringBytes(hostKey.encodedBytes)
+      ..writeStringBytes(clientEphemeralPublicKey)
+      ..writeStringBytes(serverEphemeralPublicKey)
+      ..writeMpInt(sharedSecret);
+    return writer.toBytes();
   }
 }

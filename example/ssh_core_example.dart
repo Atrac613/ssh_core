@@ -55,6 +55,39 @@ class DemoTransport implements SshTransport {
     required SshEndpoint endpoint,
     required SshTransportSettings settings,
   }) async {
+    final SshKexInitMessage clientProposal = SshKexInitMessage(
+      cookie: List<int>.filled(16, 1),
+      kexAlgorithms: const <String>[
+        'curve25519-sha256',
+        'diffie-hellman-group14-sha256',
+      ],
+      serverHostKeyAlgorithms: const <String>['ssh-ed25519', 'rsa-sha2-256'],
+      encryptionAlgorithmsClientToServer: const <String>[
+        'chacha20-poly1305@openssh.com',
+      ],
+      encryptionAlgorithmsServerToClient: const <String>[
+        'chacha20-poly1305@openssh.com',
+      ],
+      macAlgorithmsClientToServer: const <String>['hmac-sha2-256'],
+      macAlgorithmsServerToClient: const <String>['hmac-sha2-256'],
+      compressionAlgorithmsClientToServer: const <String>['none'],
+      compressionAlgorithmsServerToClient: const <String>['none'],
+    );
+    final SshKexInitMessage serverProposal = SshKexInitMessage(
+      cookie: List<int>.filled(16, 2),
+      kexAlgorithms: const <String>['curve25519-sha256'],
+      serverHostKeyAlgorithms: const <String>['ssh-ed25519'],
+      encryptionAlgorithmsClientToServer: const <String>[
+        'chacha20-poly1305@openssh.com',
+      ],
+      encryptionAlgorithmsServerToClient: const <String>[
+        'chacha20-poly1305@openssh.com',
+      ],
+      macAlgorithmsClientToServer: const <String>['hmac-sha2-256'],
+      macAlgorithmsServerToClient: const <String>['hmac-sha2-256'],
+      compressionAlgorithmsClientToServer: const <String>['none'],
+      compressionAlgorithmsServerToClient: const <String>['none'],
+    );
     final SshTransportStream transportStream = SshTransportStream(
       incoming: Stream<List<int>>.fromIterable(<List<int>>[
         utf8.encode('demo prelude line\r\nSSH-2.0-demo-server example\r\n'),
@@ -68,39 +101,28 @@ class DemoTransport implements SshTransport {
       localIdentification: settings.clientIdentification,
     );
     final SshNegotiatedAlgorithms algorithms = _algorithmNegotiator.negotiate(
-      clientProposal: SshKexInitMessage(
-        cookie: List<int>.filled(16, 1),
-        kexAlgorithms: const <String>[
-          'curve25519-sha256',
-          'diffie-hellman-group14-sha256',
-        ],
-        serverHostKeyAlgorithms: const <String>['ssh-ed25519', 'rsa-sha2-256'],
-        encryptionAlgorithmsClientToServer: const <String>[
-          'chacha20-poly1305@openssh.com',
-        ],
-        encryptionAlgorithmsServerToClient: const <String>[
-          'chacha20-poly1305@openssh.com',
-        ],
-        macAlgorithmsClientToServer: const <String>['hmac-sha2-256'],
-        macAlgorithmsServerToClient: const <String>['hmac-sha2-256'],
-        compressionAlgorithmsClientToServer: const <String>['none'],
-        compressionAlgorithmsServerToClient: const <String>['none'],
-      ),
-      serverProposal: SshKexInitMessage(
-        cookie: List<int>.filled(16, 2),
-        kexAlgorithms: const <String>['curve25519-sha256'],
-        serverHostKeyAlgorithms: const <String>['ssh-ed25519'],
-        encryptionAlgorithmsClientToServer: const <String>[
-          'chacha20-poly1305@openssh.com',
-        ],
-        encryptionAlgorithmsServerToClient: const <String>[
-          'chacha20-poly1305@openssh.com',
-        ],
-        macAlgorithmsClientToServer: const <String>['hmac-sha2-256'],
-        macAlgorithmsServerToClient: const <String>['hmac-sha2-256'],
-        compressionAlgorithmsClientToServer: const <String>['none'],
-        compressionAlgorithmsServerToClient: const <String>['none'],
-      ),
+      clientProposal: clientProposal,
+      serverProposal: serverProposal,
+    );
+    final SshKexEcdhInitMessage clientKeyExchange = SshKexEcdhInitMessage(
+      clientEphemeralPublicKey: const <int>[3, 1, 4, 1, 5],
+    );
+    final SshKexEcdhReplyMessage serverKeyExchange = SshKexEcdhReplyMessage(
+      hostKey: _hostKey,
+      serverEphemeralPublicKey: const <int>[9, 2, 6, 5],
+      exchangeHashSignature: const <int>[3, 5, 8, 9],
+    );
+    assert(
+      SshKexEcdhExchangeHashInput(
+        clientIdentification: exchange.localBanner.value,
+        serverIdentification: exchange.remoteBanner.value,
+        clientKexInitPayload: clientProposal.encodePayload(),
+        serverKexInitPayload: serverProposal.encodePayload(),
+        hostKey: serverKeyExchange.hostKey,
+        clientEphemeralPublicKey: clientKeyExchange.clientEphemeralPublicKey,
+        serverEphemeralPublicKey: serverKeyExchange.serverEphemeralPublicKey,
+        sharedSecret: BigInt.from(42),
+      ).encode().isNotEmpty,
     );
 
     return SshHandshakeInfo.fromBannerExchange(

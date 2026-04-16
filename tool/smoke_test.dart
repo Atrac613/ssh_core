@@ -172,6 +172,95 @@ Future<void> _exerciseTransportPrimitives() async {
   );
   assert(decodedKexInit.cookie.length == 16);
 
+  final SshPayloadWriter mpIntWriter = SshPayloadWriter()
+    ..writeMpInt(BigInt.zero)
+    ..writeMpInt(BigInt.from(0x123456))
+    ..writeMpInt(BigInt.from(-129));
+  final SshPayloadReader mpIntReader = SshPayloadReader(mpIntWriter.toBytes());
+  final BigInt zeroMpInt = mpIntReader.readMpInt();
+  final BigInt positiveMpInt = mpIntReader.readMpInt();
+  final BigInt negativeMpInt = mpIntReader.readMpInt();
+  assert(zeroMpInt == BigInt.zero);
+  assert(positiveMpInt == BigInt.from(0x123456));
+  assert(negativeMpInt == BigInt.from(-129));
+  mpIntReader.expectDone();
+
+  final SshKexEcdhInitMessage ecdhInit = SshKexEcdhInitMessage(
+    clientEphemeralPublicKey: const <int>[1, 3, 3, 7],
+  );
+  final SshKexEcdhInitMessage decodedEcdhInit =
+      SshKexEcdhInitMessage.decodePayload(ecdhInit.encodePayload());
+  assert(
+    _sameBytes(
+      decodedEcdhInit.clientEphemeralPublicKey,
+      ecdhInit.clientEphemeralPublicKey,
+    ),
+  );
+
+  final SshHostKey hostKey = _testHostKey();
+  final SshKexEcdhReplyMessage ecdhReply = SshKexEcdhReplyMessage(
+    hostKey: hostKey,
+    serverEphemeralPublicKey: const <int>[2, 4, 6, 8],
+    exchangeHashSignature: const <int>[9, 7, 5, 3],
+  );
+  final SshKexEcdhReplyMessage decodedEcdhReply =
+      SshKexEcdhReplyMessage.decodePayload(ecdhReply.encodePayload());
+  assert(decodedEcdhReply.hostKey.matches(hostKey));
+  assert(
+    _sameBytes(
+      decodedEcdhReply.serverEphemeralPublicKey,
+      ecdhReply.serverEphemeralPublicKey,
+    ),
+  );
+  assert(
+    _sameBytes(
+      decodedEcdhReply.exchangeHashSignature,
+      ecdhReply.exchangeHashSignature,
+    ),
+  );
+
+  final Uint8List exchangeHashInput = SshKexEcdhExchangeHashInput(
+    clientIdentification: 'SSH-2.0-ssh_core-client',
+    serverIdentification: 'SSH-2.0-ssh_core-server',
+    clientKexInitPayload: kexInit.encodePayload(),
+    serverKexInitPayload: decodedKexInit.encodePayload(),
+    hostKey: hostKey,
+    clientEphemeralPublicKey: ecdhInit.clientEphemeralPublicKey,
+    serverEphemeralPublicKey: ecdhReply.serverEphemeralPublicKey,
+    sharedSecret: BigInt.from(0x123456),
+  ).encode();
+  final SshPayloadReader exchangeHashReader =
+      SshPayloadReader(exchangeHashInput);
+  final String exchangeHashClientIdentification =
+      exchangeHashReader.readString();
+  final String exchangeHashServerIdentification =
+      exchangeHashReader.readString();
+  final Uint8List exchangeHashClientKexInit =
+      exchangeHashReader.readStringBytes();
+  final Uint8List exchangeHashServerKexInit =
+      exchangeHashReader.readStringBytes();
+  final Uint8List exchangeHashHostKey = exchangeHashReader.readStringBytes();
+  final Uint8List exchangeHashClientEphemeral =
+      exchangeHashReader.readStringBytes();
+  final Uint8List exchangeHashServerEphemeral =
+      exchangeHashReader.readStringBytes();
+  final BigInt exchangeHashSharedSecret = exchangeHashReader.readMpInt();
+  assert(exchangeHashClientIdentification == 'SSH-2.0-ssh_core-client');
+  assert(exchangeHashServerIdentification == 'SSH-2.0-ssh_core-server');
+  assert(_sameBytes(exchangeHashClientKexInit, kexInit.encodePayload()));
+  assert(
+    _sameBytes(exchangeHashServerKexInit, decodedKexInit.encodePayload()),
+  );
+  assert(_sameBytes(exchangeHashHostKey, hostKey.encodedBytes));
+  assert(
+    _sameBytes(exchangeHashClientEphemeral, ecdhInit.clientEphemeralPublicKey),
+  );
+  assert(
+    _sameBytes(exchangeHashServerEphemeral, ecdhReply.serverEphemeralPublicKey),
+  );
+  assert(exchangeHashSharedSecret == BigInt.from(0x123456));
+  exchangeHashReader.expectDone();
+
   final SshAlgorithmNegotiator negotiator = const SshAlgorithmNegotiator();
   final SshNegotiatedAlgorithms negotiatedAlgorithms = negotiator.negotiate(
     clientProposal: SshKexInitMessage(
@@ -384,6 +473,20 @@ class _FakeTransport implements SshTransport {
 
   @override
   Future<void> sendGlobalRequest(SshGlobalRequest request) async {}
+}
+
+bool _sameBytes(List<int> left, List<int> right) {
+  if (left.length != right.length) {
+    return false;
+  }
+
+  for (int index = 0; index < left.length; index += 1) {
+    if (left[index] != right[index]) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 SshHostKey _testHostKey() {
