@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'global_request.dart';
 import 'transport.dart';
 
 class SshSocketTransport implements SshPacketTransport {
@@ -117,8 +118,26 @@ class SshSocketTransport implements SshPacketTransport {
 
   @override
   Future<void> sendGlobalRequest(SshGlobalRequest request) async {
-    throw UnsupportedError(
-      'SSH global request encoding is not implemented yet.',
+    final Object? encodedPayload = request.payload['encodedPayload'];
+    final List<int> requestData;
+    if (encodedPayload == null) {
+      requestData = const <int>[];
+    } else if (encodedPayload is List<int>) {
+      requestData = encodedPayload;
+    } else {
+      throw ArgumentError.value(
+        encodedPayload,
+        'request.payload["encodedPayload"]',
+        'SSH global request payload must be a byte list.',
+      );
+    }
+
+    await writePacket(
+      SshGlobalRequestMessage(
+        requestName: request.type,
+        wantReply: request.wantReply,
+        requestData: requestData,
+      ).encodePayload(),
     );
   }
 

@@ -18,6 +18,7 @@ Future<void> main() async {
   await _exerciseSftpProtocol();
   await _exerciseProtocolSftpSubsystem();
   await _exerciseForwardingProtocol();
+  await _exerciseProtocolPortForwardingService();
   await _exerciseSocks5Protocol();
   await _exerciseHostKeyVerification();
   await _exerciseSocketTransport();
@@ -1537,6 +1538,30 @@ Future<void> _exerciseForwardingProtocol() async {
   assert(decodedForwardedTcpIp.originatorPort == 50000);
 }
 
+Future<void> _exerciseProtocolPortForwardingService() async {
+  final _ScriptedPacketTransport transport = _ScriptedPacketTransport(
+    scriptedPackets: const <List<int>>[],
+  );
+  final SshProtocolPortForwardingService service =
+      SshProtocolPortForwardingService(transport: transport);
+  final SshPortForward remoteForward = await service.openForward(
+    const SshForwardRequest.remote(
+      bindHost: '0.0.0.0',
+      bindPort: 10022,
+      target: SshForwardTarget(host: '127.0.0.1', port: 22),
+    ),
+  );
+  await remoteForward.close();
+
+  assert(remoteForward.mode == SshForwardingMode.remote);
+  assert(remoteForward.bindPort == 10022);
+  assert(transport.sentGlobalRequests.length == 2);
+  assert(transport.sentGlobalRequests.first.type == sshTcpIpForwardRequestName);
+  assert(
+    transport.sentGlobalRequests.last.type == sshCancelTcpIpForwardRequestName,
+  );
+}
+
 Future<void> _exerciseSocks5Protocol() async {
   final SshSocks5Greeting greeting = SshSocks5Greeting(
     methods: const <SshSocks5AuthMethod>[
@@ -1791,6 +1816,7 @@ class _ScriptedPacketTransport implements SshPacketTransport {
 
   final List<List<int>> _scriptedPackets;
   final List<List<int>> writtenPayloads = <List<int>>[];
+  final List<SshGlobalRequest> sentGlobalRequests = <SshGlobalRequest>[];
 
   @override
   SshTransportState get state => SshTransportState.connected;
@@ -1821,7 +1847,9 @@ class _ScriptedPacketTransport implements SshPacketTransport {
   }
 
   @override
-  Future<void> sendGlobalRequest(SshGlobalRequest request) async {}
+  Future<void> sendGlobalRequest(SshGlobalRequest request) async {
+    sentGlobalRequests.add(request);
+  }
 
   @override
   Future<void> writeBytes(List<int> bytes) async {

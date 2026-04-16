@@ -25,6 +25,7 @@ Implemented in this scaffold:
 - packet-backed SFTP subsystem for list/read/write/mkdir/delete flows
 - forwarding packet helpers for `tcpip-forward` and TCP/IP channel payloads
 - SOCKS5 helpers for dynamic port-forward request and reply parsing
+- remote port-forward control service built on SSH global requests
 - transport payload/message codec and `SSH_MSG_KEXINIT` helper
 - transport global-request helpers for forwarding-related flows
 - transport algorithm negotiation for client/server `KEXINIT` proposals
