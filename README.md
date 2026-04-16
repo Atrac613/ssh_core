@@ -19,6 +19,7 @@ Implemented in this scaffold:
 - protocol authenticator for `none`, `password`, and keyboard-interactive
 - channel packet helpers for open/data/request/window/close flows
 - session and exec channel-request helpers including PTY/env/exit messages
+- SFTP packet helpers for init/version/open/read/write/status/name flows
 - transport payload/message codec and `SSH_MSG_KEXINIT` helper
 - transport algorithm negotiation for client/server `KEXINIT` proposals
 - host key parsing and verifier contracts for the pre-auth handshake
@@ -35,7 +36,7 @@ Not implemented yet:
 - key exchange and encryption
 - message authentication, compression, and rekeying
 - concrete password/public-key/keyboard-interactive exchanges
-- real channel multiplexing, SFTP packets, and port forwarding streams
+- real channel multiplexing, SFTP subsystem streams, and port forwarding streams
 
 ## Public modules
 
@@ -46,7 +47,7 @@ Not implemented yet:
 - `sessions`: shell/session abstractions and session channel-request helpers
 - `pty`: terminal allocation and resize metadata
 - `exec`: non-interactive command execution
-- `sftp`: file transfer subsystem contracts
+- `sftp`: file transfer subsystem contracts and packet helpers
 - `port forwarding`: local, remote, and dynamic forwarding contracts
 
 ## Example

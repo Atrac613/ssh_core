@@ -11,6 +11,7 @@ Future<void> main() async {
   await _exerciseProtocolAuthenticator();
   await _exerciseChannelProtocol();
   await _exerciseSessionProtocol();
+  await _exerciseSftpProtocol();
   await _exerciseHostKeyVerification();
   await _exerciseSocketTransport();
 
@@ -704,6 +705,183 @@ Future<void> _exerciseSessionProtocol() async {
       SshExitSignalChannelRequest.decode(exitSignal.encode());
   assert(decodedExitSignal.signalName == 'TERM');
   assert(decodedExitSignal.errorMessage == 'Terminated.');
+}
+
+Future<void> _exerciseSftpProtocol() async {
+  final SftpPacketCodec packetCodec = const SftpPacketCodec();
+
+  final SftpPacket decodedInitPacket = packetCodec.decode(
+    packetCodec.encode(const SftpInitMessage(version: 3).toPacket()),
+  );
+  assert(decodedInitPacket.type == SftpPacketType.init);
+  assert(decodedInitPacket.requestId == null);
+  final SftpInitMessage decodedInit = SftpInitMessage.decodePayload(
+    decodedInitPacket.payload,
+  );
+  assert(decodedInit.version == 3);
+
+  final SftpVersionMessage versionMessage = SftpVersionMessage(
+    version: 3,
+    extensions: const <String, String>{'posix-rename@openssh.com': '1'},
+  );
+  final SftpPacket decodedVersionPacket = packetCodec.decode(
+    packetCodec.encode(versionMessage.toPacket()),
+  );
+  assert(decodedVersionPacket.type == SftpPacketType.version);
+  assert(decodedVersionPacket.requestId == null);
+  final SftpVersionMessage decodedVersion = SftpVersionMessage.decodePayload(
+    decodedVersionPacket.payload,
+  );
+  assert(decodedVersion.extensions['posix-rename@openssh.com'] == '1');
+
+  final SftpFileAttributes attributes = SftpFileAttributes(
+    size: 4294967297,
+    userId: 1000,
+    groupId: 1000,
+    permissions: 0x1A4,
+    accessTime: 1700000000,
+    modifiedTime: 1700000123,
+    extensions: const <String, List<int>>{
+      'vendor@example.com': <int>[7, 8, 9],
+    },
+  );
+  final SftpFileAttributes decodedAttributes = SftpFileAttributes.decode(
+    SshPayloadReader(attributes.encode()),
+  );
+  assert(decodedAttributes.size == 4294967297);
+  assert(decodedAttributes.userId == 1000);
+  assert(decodedAttributes.groupId == 1000);
+  assert(decodedAttributes.permissions == 0x1A4);
+  assert(decodedAttributes.accessTime == 1700000000);
+  assert(decodedAttributes.modifiedTime == 1700000123);
+  assert(
+    _sameBytes(
+      decodedAttributes.extensions['vendor@example.com']!,
+      const <int>[7, 8, 9],
+    ),
+  );
+
+  final SftpOpenRequest openRequest = SftpOpenRequest(
+    filename: '/tmp/demo.txt',
+    pflags: 0x00000001 | 0x00000008,
+    attributes: attributes,
+  );
+  final SftpOpenRequest decodedOpenRequest = SftpOpenRequest.decodePayload(
+    openRequest.encodePayload(),
+  );
+  assert(decodedOpenRequest.filename == '/tmp/demo.txt');
+  assert(decodedOpenRequest.pflags == 0x00000009);
+  assert(decodedOpenRequest.attributes.permissions == 0x1A4);
+
+  final SftpReadRequest readRequest = SftpReadRequest(
+    handle: const <int>[1, 2, 3],
+    offset: 4294967297,
+    length: 4096,
+  );
+  final SftpPacket decodedReadPacket = packetCodec.decode(
+    packetCodec.encode(
+      SftpPacket(
+        type: SftpPacketType.read,
+        requestId: 7,
+        payload: readRequest.encodePayload(),
+      ),
+    ),
+  );
+  assert(decodedReadPacket.requestId == 7);
+  final SftpReadRequest decodedReadRequest = SftpReadRequest.decodePayload(
+    decodedReadPacket.payload,
+  );
+  assert(decodedReadRequest.offset == 4294967297);
+  assert(decodedReadRequest.length == 4096);
+
+  final SftpWriteRequest writeRequest = SftpWriteRequest(
+    handle: const <int>[4, 5, 6],
+    offset: 4294967298,
+    data: const <int>[9, 8, 7, 6],
+  );
+  final SftpWriteRequest decodedWriteRequest = SftpWriteRequest.decodePayload(
+    writeRequest.encodePayload(),
+  );
+  assert(decodedWriteRequest.offset == 4294967298);
+  assert(_sameBytes(decodedWriteRequest.data, const <int>[9, 8, 7, 6]));
+
+  final SftpStatusMessage statusMessage = const SftpStatusMessage(
+    code: SftpStatusCode.ok,
+    message: 'done',
+  );
+  final SftpStatusMessage decodedStatus = SftpStatusMessage.decodePayload(
+    statusMessage.encodePayload(),
+  );
+  assert(decodedStatus.code == SftpStatusCode.ok);
+  assert(decodedStatus.message == 'done');
+
+  final SftpHandleMessage handleMessage = SftpHandleMessage(
+    handle: const <int>[10, 11, 12],
+  );
+  final SftpHandleMessage decodedHandleMessage =
+      SftpHandleMessage.decodePayload(handleMessage.encodePayload());
+  assert(_sameBytes(decodedHandleMessage.handle, const <int>[10, 11, 12]));
+
+  final SftpDataMessage dataMessage = SftpDataMessage(
+    data: const <int>[21, 22, 23],
+  );
+  final SftpDataMessage decodedDataMessage = SftpDataMessage.decodePayload(
+    dataMessage.encodePayload(),
+  );
+  assert(_sameBytes(decodedDataMessage.data, const <int>[21, 22, 23]));
+
+  final SftpNameMessage nameMessage = SftpNameMessage(
+    entries: <SftpNameEntry>[
+      SftpNameEntry(
+        filename: 'demo.txt',
+        longname: '-rw-r--r-- 1 demo demo 4 Jan 1 00:00 demo.txt',
+        attributes: SftpFileAttributes(
+          size: 4,
+          permissions: 0x1A4,
+        ),
+      ),
+    ],
+  );
+  final SftpNameMessage decodedNameMessage = SftpNameMessage.decodePayload(
+    nameMessage.encodePayload(),
+  );
+  assert(decodedNameMessage.entries.single.filename == 'demo.txt');
+  assert(decodedNameMessage.entries.single.attributes.size == 4);
+
+  final SftpPathRequest mkdirRequest = SftpPathRequest(
+    path: '/tmp/new-dir',
+    type: SftpPacketType.mkdir,
+    attributes: SftpFileAttributes(permissions: 0x1ED),
+  );
+  final SftpPathRequest decodedMkdirRequest = SftpPathRequest.decodePayload(
+    mkdirRequest.encodePayload(),
+    SftpPacketType.mkdir,
+  );
+  assert(decodedMkdirRequest.path == '/tmp/new-dir');
+  assert(decodedMkdirRequest.attributes.permissions == 0x1ED);
+
+  final SftpPathRequest removeRequest = const SftpPathRequest(
+    path: '/tmp/demo.txt',
+    type: SftpPacketType.remove,
+  );
+  final SftpPathRequest decodedRemoveRequest = SftpPathRequest.decodePayload(
+    removeRequest.encodePayload(),
+    SftpPacketType.remove,
+  );
+  assert(decodedRemoveRequest.path == '/tmp/demo.txt');
+  assert(decodedRemoveRequest.attributes.isEmpty);
+
+  final SftpHandleRequest readdirRequest = SftpHandleRequest(
+    type: SftpPacketType.readdir,
+    handle: const <int>[13, 14, 15],
+  );
+  final SftpHandleRequest decodedHandleRequest =
+      SftpHandleRequest.decodePayload(
+    readdirRequest.encodePayload(),
+    SftpPacketType.readdir,
+  );
+  assert(decodedHandleRequest.type == SftpPacketType.readdir);
+  assert(_sameBytes(decodedHandleRequest.handle, const <int>[13, 14, 15]));
 }
 
 Future<void> _exerciseHostKeyVerification() async {

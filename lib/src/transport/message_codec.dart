@@ -52,6 +52,19 @@ class SshPayloadWriter {
     _builder.add(data.buffer.asUint8List());
   }
 
+  void writeUint64(int value) {
+    if (value < 0 || (value >> 64) != 0) {
+      throw RangeError.value(
+        value,
+        'value',
+        'SSH uint64 values must be in the range 0..2^64-1.',
+      );
+    }
+
+    writeUint32(value >> 32);
+    writeUint32(value & 0xFFFFFFFF);
+  }
+
   void writeBytes(List<int> value) {
     _builder.add(value);
   }
@@ -111,6 +124,12 @@ class SshPayloadReader {
         _bytes[_offset + 3];
     _offset += 4;
     return value;
+  }
+
+  int readUint64() {
+    final int high = readUint32();
+    final int low = readUint32();
+    return (high << 32) | low;
   }
 
   Uint8List readBytes(int length) {
