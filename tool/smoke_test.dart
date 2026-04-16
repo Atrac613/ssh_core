@@ -136,6 +136,31 @@ Future<void> _exerciseTransportPrimitives() async {
   assert(streamedPacket.payload.length == 4);
   assert(transportStream.pendingByteCount == 0);
   await transportStream.close();
+
+  final SshKexInitMessage kexInit = SshKexInitMessage(
+    cookie: List<int>.generate(16, (int i) => i),
+    kexAlgorithms: const <String>['curve25519-sha256'],
+    serverHostKeyAlgorithms: const <String>['ssh-ed25519'],
+    encryptionAlgorithmsClientToServer: const <String>[
+      'chacha20-poly1305@openssh.com',
+    ],
+    encryptionAlgorithmsServerToClient: const <String>[
+      'chacha20-poly1305@openssh.com',
+    ],
+    macAlgorithmsClientToServer: const <String>['hmac-sha2-256'],
+    macAlgorithmsServerToClient: const <String>['hmac-sha2-256'],
+    compressionAlgorithmsClientToServer: const <String>['none'],
+    compressionAlgorithmsServerToClient: const <String>['none'],
+  );
+  final Uint8List kexPayload = kexInit.encodePayload();
+  final SshKexInitMessage decodedKexInit = SshKexInitMessage.decodePayload(
+    kexPayload,
+  );
+  assert(decodedKexInit.kexAlgorithms.single == 'curve25519-sha256');
+  assert(
+    decodedKexInit.serverHostKeyAlgorithms.single == 'ssh-ed25519',
+  );
+  assert(decodedKexInit.cookie.length == 16);
 }
 
 Future<void> _exerciseSocketTransport() async {
