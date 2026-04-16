@@ -18,8 +18,16 @@ enum SshMessageId {
   userauthInfoRequest(60),
   userauthInfoResponse(61),
   channelOpen(90),
+  channelOpenConfirmation(91),
+  channelOpenFailure(92),
+  channelWindowAdjust(93),
   channelData(94),
-  channelClose(97);
+  channelExtendedData(95),
+  channelEof(96),
+  channelClose(97),
+  channelRequest(98),
+  channelSuccess(99),
+  channelFailure(100);
 
   const SshMessageId(this.value);
 

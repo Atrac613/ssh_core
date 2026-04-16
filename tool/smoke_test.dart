@@ -9,6 +9,7 @@ Future<void> main() async {
   await _exerciseTransportPrimitives();
   await _exerciseAuthProtocol();
   await _exerciseProtocolAuthenticator();
+  await _exerciseChannelProtocol();
   await _exerciseHostKeyVerification();
   await _exerciseSocketTransport();
 
@@ -513,6 +514,115 @@ Future<void> _exerciseProtocolAuthenticator() async {
     keyboardInteractiveTransport.writtenPayloads[2],
   );
   assert(infoResponse.responses.single == '123456');
+}
+
+Future<void> _exerciseChannelProtocol() async {
+  final SshChannelOpenMessage open = SshChannelOpenMessage(
+    channelType: 'session',
+    senderChannel: 1,
+    initialWindowSize: 1024,
+    maximumPacketSize: 32768,
+  );
+  final SshChannelOpenMessage decodedOpen = SshChannelOpenMessage.decodePayload(
+    open.encodePayload(),
+  );
+  assert(decodedOpen.channelType == 'session');
+  assert(decodedOpen.senderChannel == 1);
+
+  final SshChannelOpenConfirmationMessage confirmation =
+      SshChannelOpenConfirmationMessage(
+    recipientChannel: 1,
+    senderChannel: 7,
+    initialWindowSize: 2048,
+    maximumPacketSize: 32768,
+  );
+  final SshChannelOpenConfirmationMessage decodedConfirmation =
+      SshChannelOpenConfirmationMessage.decodePayload(
+    confirmation.encodePayload(),
+  );
+  assert(decodedConfirmation.recipientChannel == 1);
+  assert(decodedConfirmation.senderChannel == 7);
+
+  final SshChannelOpenFailureMessage failure = SshChannelOpenFailureMessage(
+    recipientChannel: 1,
+    reason: SshChannelOpenFailureReason.connectFailed,
+    description: 'Connection refused',
+  );
+  final SshChannelOpenFailureMessage decodedFailure =
+      SshChannelOpenFailureMessage.decodePayload(failure.encodePayload());
+  assert(
+    decodedFailure.reason == SshChannelOpenFailureReason.connectFailed,
+  );
+  assert(decodedFailure.description == 'Connection refused');
+
+  final SshChannelWindowAdjustMessage windowAdjust =
+      const SshChannelWindowAdjustMessage(
+    recipientChannel: 1,
+    bytesToAdd: 4096,
+  );
+  final SshChannelWindowAdjustMessage decodedWindowAdjust =
+      SshChannelWindowAdjustMessage.decodePayload(windowAdjust.encodePayload());
+  assert(decodedWindowAdjust.bytesToAdd == 4096);
+
+  final SshChannelDataMessage data = SshChannelDataMessage(
+    recipientChannel: 1,
+    data: utf8.encode('hello'),
+  );
+  final SshChannelDataMessage decodedData = SshChannelDataMessage.decodePayload(
+    data.encodePayload(),
+  );
+  assert(utf8.decode(decodedData.data) == 'hello');
+
+  final SshChannelExtendedDataMessage extendedData =
+      SshChannelExtendedDataMessage(
+    recipientChannel: 1,
+    dataTypeCode: 1,
+    data: utf8.encode('stderr'),
+  );
+  final SshChannelExtendedDataMessage decodedExtendedData =
+      SshChannelExtendedDataMessage.decodePayload(extendedData.encodePayload());
+  assert(decodedExtendedData.dataTypeCode == 1);
+  assert(utf8.decode(decodedExtendedData.data) == 'stderr');
+
+  final SshChannelRequestMessage request = SshChannelRequestMessage(
+    recipientChannel: 1,
+    requestType: 'shell',
+    wantReply: true,
+  );
+  final SshChannelRequestMessage decodedRequest =
+      SshChannelRequestMessage.decodePayload(request.encodePayload());
+  assert(decodedRequest.requestType == 'shell');
+  assert(decodedRequest.wantReply);
+
+  final SshChannelSuccessMessage success = const SshChannelSuccessMessage(
+    recipientChannel: 1,
+  );
+  final SshChannelSuccessMessage decodedSuccess =
+      SshChannelSuccessMessage.decodePayload(success.encodePayload());
+  assert(decodedSuccess.recipientChannel == 1);
+
+  final SshChannelFailureMessage requestFailure =
+      const SshChannelFailureMessage(
+    recipientChannel: 1,
+  );
+  final SshChannelFailureMessage decodedRequestFailure =
+      SshChannelFailureMessage.decodePayload(requestFailure.encodePayload());
+  assert(decodedRequestFailure.recipientChannel == 1);
+
+  final SshChannelEofMessage eof = const SshChannelEofMessage(
+    recipientChannel: 1,
+  );
+  final SshChannelEofMessage decodedEof = SshChannelEofMessage.decodePayload(
+    eof.encodePayload(),
+  );
+  assert(decodedEof.recipientChannel == 1);
+
+  final SshChannelCloseMessage close = const SshChannelCloseMessage(
+    recipientChannel: 1,
+  );
+  final SshChannelCloseMessage decodedClose =
+      SshChannelCloseMessage.decodePayload(close.encodePayload());
+  assert(decodedClose.recipientChannel == 1);
 }
 
 Future<void> _exerciseHostKeyVerification() async {
