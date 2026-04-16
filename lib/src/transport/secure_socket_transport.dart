@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -11,10 +12,12 @@ import 'message_codec.dart';
 import 'packet_protection.dart';
 import 'transport.dart';
 
-class SshSecureSocketTransport implements SshPacketTransport {
+class SshSecureSocketTransport
+    implements SshPacketTransport, SshGlobalRequestReplyTransport {
   SshSecureSocketTransport({
     this.bannerExchange = const SshBannerExchange(),
     this.tcpNoDelay = true,
+    this.rekeyPolicy = const SshRekeyPolicy(),
     Random? random,
     List<String> keyExchangeAlgorithms = const <String>[
       sshCurve25519Sha256,
@@ -45,6 +48,7 @@ class SshSecureSocketTransport implements SshPacketTransport {
 
   final SshBannerExchange bannerExchange;
   final bool tcpNoDelay;
+  final SshRekeyPolicy rekeyPolicy;
   final Random _random;
   final List<String> keyExchangeAlgorithms;
   final List<String> serverHostKeyAlgorithms;
@@ -55,10 +59,25 @@ class SshSecureSocketTransport implements SshPacketTransport {
   Socket? _socket;
   StreamIterator<List<int>>? _incoming;
   final List<int> _incomingBuffer = <int>[];
+  final Queue<SshBinaryPacket> _packetQueue = ListQueue<SshBinaryPacket>();
+  final Queue<Completer<SshBinaryPacket>> _pendingPacketReaders =
+      ListQueue<Completer<SshBinaryPacket>>();
+  final Queue<Completer<SshGlobalRequestReply>> _pendingGlobalRequestReplies =
+      ListQueue<Completer<SshGlobalRequestReply>>();
   SshPacketWriterState _writerState = SshPlainPacketWriterState();
   SshPacketReaderState _readerState = SshPlainPacketReaderState();
   SshHandshakeInfo? _handshake;
   SshTransportState _state = SshTransportState.disconnected;
+  Future<void>? _readLoop;
+  Completer<void>? _activeRekey;
+  SshKexInitMessage? _pendingClientKexInit;
+  int _sentPacketsSinceKeyExchange = 0;
+  int _receivedPacketsSinceKeyExchange = 0;
+  int _sentBytesSinceKeyExchange = 0;
+  int _receivedBytesSinceKeyExchange = 0;
+  DateTime? _lastKeyExchangeAt;
+  Object? _terminalError;
+  StackTrace? _terminalStackTrace;
 
   @override
   SshTransportState get state => _state;
@@ -66,6 +85,11 @@ class SshSecureSocketTransport implements SshPacketTransport {
   Socket? get socket => _socket;
 
   SshHandshakeInfo? get handshake => _handshake;
+
+  Future<void> rekey() async {
+    _ensureConnected();
+    await _beginClientRekey(force: true);
+  }
 
   @override
   Future<SshHandshakeInfo> connect({
@@ -96,19 +120,42 @@ class SshSecureSocketTransport implements SshPacketTransport {
       _socket = socket;
       _incoming = incoming;
       _incomingBuffer.clear();
+      _packetQueue.clear();
+      _pendingPacketReaders.clear();
+      _pendingGlobalRequestReplies.clear();
       _writerState = SshPlainPacketWriterState();
       _readerState = SshPlainPacketReaderState();
+      _activeRekey = null;
+      _pendingClientKexInit = null;
+      _terminalError = null;
+      _terminalStackTrace = null;
+      _readLoop = null;
 
       final SshBannerExchangeResult exchange = await _exchangeBanners(
         localIdentification: settings.clientIdentification,
       );
-      final SshHandshakeInfo handshake = await _runKeyExchange(
-        exchange: exchange,
+      final SshKexInitMessage clientKexInit = _buildClientKexInit();
+      await _writePlainPacket(clientKexInit.encodePayload());
+
+      final SshKexInitMessage serverKexInit = SshKexInitMessage.decodePayload(
+        (await _readPacketWithState(SshPlainPacketReaderState())).payload,
       );
 
-      _handshake = handshake;
+      final _SshKeyExchangeResult keyExchange = await _runKeyExchangeRound(
+        localIdentification: exchange.localBanner.value,
+        remoteIdentification: exchange.remoteBanner.value,
+        clientKexInit: clientKexInit,
+        serverKexInit: serverKexInit,
+        sessionIdentifier: null,
+        writePacket: _writePlainPacket,
+        readPacket: () => _readPacketWithState(SshPlainPacketReaderState()),
+      );
+
+      _handshake = keyExchange.handshake;
+      _resetRekeyCounters();
       _state = SshTransportState.connected;
-      return handshake;
+      _startReadLoop();
+      return keyExchange.handshake;
     } catch (_) {
       _handshake = null;
       _state = SshTransportState.disconnected;
@@ -119,40 +166,83 @@ class SshSecureSocketTransport implements SshPacketTransport {
 
   @override
   Future<void> sendGlobalRequest(SshGlobalRequest request) async {
-    final Object? encodedPayload = request.payload['encodedPayload'];
-    final List<int> requestData;
-    if (encodedPayload == null) {
-      requestData = const <int>[];
-    } else if (encodedPayload is List<int>) {
-      requestData = encodedPayload;
-    } else {
-      throw ArgumentError.value(
-        encodedPayload,
-        'request.payload["encodedPayload"]',
-        'SSH global request payload must be a byte list.',
+    if (!request.wantReply) {
+      await _writeApplicationPacket(
+        SshGlobalRequestMessage(
+          requestName: request.type,
+          wantReply: false,
+          requestData: _resolveGlobalRequestData(request),
+        ).encodePayload(),
       );
+      return;
     }
 
-    await writePacket(
-      SshGlobalRequestMessage(
-        requestName: request.type,
-        wantReply: request.wantReply,
-        requestData: requestData,
-      ).encodePayload(),
-    );
+    await sendGlobalRequestWithReply(request);
+  }
+
+  @override
+  Future<SshGlobalRequestReply> sendGlobalRequestWithReply(
+    SshGlobalRequest request,
+  ) async {
+    _ensureConnected();
+    final List<int> requestData = _resolveGlobalRequestData(request);
+
+    if (!request.wantReply) {
+      await _writeApplicationPacket(
+        SshGlobalRequestMessage(
+          requestName: request.type,
+          wantReply: false,
+          requestData: requestData,
+        ).encodePayload(),
+      );
+      return SshGlobalRequestReply.success();
+    }
+
+    final Completer<SshGlobalRequestReply> replyCompleter =
+        Completer<SshGlobalRequestReply>();
+    _pendingGlobalRequestReplies.add(replyCompleter);
+    try {
+      await _writeApplicationPacket(
+        SshGlobalRequestMessage(
+          requestName: request.type,
+          wantReply: true,
+          requestData: requestData,
+        ).encodePayload(),
+      );
+      return await replyCompleter.future;
+    } catch (error, stackTrace) {
+      _pendingGlobalRequestReplies.remove(replyCompleter);
+      if (!replyCompleter.isCompleted) {
+        replyCompleter.completeError(error, stackTrace);
+      }
+      rethrow;
+    }
   }
 
   @override
   Future<void> disconnect() async {
+    if (_state == SshTransportState.closed) {
+      return;
+    }
+
     _state = SshTransportState.closed;
     _handshake = null;
     await _closeResources();
+    _failPending(StateError('SSH secure socket transport is closed.'));
   }
 
   @override
   Future<SshBinaryPacket> readPacket() async {
     _ensureConnected();
-    return _readPacketWithState(_readerState);
+    _throwTerminalErrorIfNeeded();
+
+    if (_packetQueue.isNotEmpty) {
+      return _packetQueue.removeFirst();
+    }
+
+    final Completer<SshBinaryPacket> completer = Completer<SshBinaryPacket>();
+    _pendingPacketReaders.add(completer);
+    return completer.future;
   }
 
   @override
@@ -165,14 +255,15 @@ class SshSecureSocketTransport implements SshPacketTransport {
   @override
   Future<void> writePacket(List<int> payload) async {
     _ensureConnected();
-    await writeBytes(_writerState.encode(payload));
+    await _writeApplicationPacket(payload);
   }
 
   Future<SshBannerExchangeResult> _exchangeBanners({
     required String localIdentification,
   }) async {
     await writeBytes(
-        utf8.encode(bannerExchange.formatLocalLine(localIdentification)));
+      utf8.encode(bannerExchange.formatLocalLine(localIdentification)),
+    );
 
     final List<String> remoteLines = <String>[];
     for (;;) {
@@ -193,16 +284,15 @@ class SshSecureSocketTransport implements SshPacketTransport {
     }
   }
 
-  Future<SshHandshakeInfo> _runKeyExchange({
-    required SshBannerExchangeResult exchange,
+  Future<_SshKeyExchangeResult> _runKeyExchangeRound({
+    required String localIdentification,
+    required String remoteIdentification,
+    required SshKexInitMessage clientKexInit,
+    required SshKexInitMessage serverKexInit,
+    required List<int>? sessionIdentifier,
+    required Future<void> Function(List<int> payload) writePacket,
+    required Future<SshBinaryPacket> Function() readPacket,
   }) async {
-    final SshKexInitMessage clientKexInit = _buildClientKexInit();
-    await _writePlainPacket(clientKexInit.encodePayload());
-
-    final SshKexInitMessage serverKexInit = SshKexInitMessage.decodePayload(
-      (await _readPacketWithState(SshPlainPacketReaderState())).payload,
-    );
-
     final SshNegotiatedAlgorithms negotiatedAlgorithms =
         const SshAlgorithmNegotiator().negotiate(
       clientProposal: clientKexInit,
@@ -211,18 +301,18 @@ class SshSecureSocketTransport implements SshPacketTransport {
     _validateNegotiatedAlgorithms(negotiatedAlgorithms);
 
     if (negotiatedAlgorithms.ignoreGuessedServerPacket) {
-      await _readPacketWithState(SshPlainPacketReaderState());
+      await readPacket();
     }
 
     final SshCurve25519KeyPair keyPair = SshCurve25519KeyPair.generate(_random);
-    await _writePlainPacket(
+    await writePacket(
       SshKexEcdhInitMessage(
         clientEphemeralPublicKey: keyPair.publicKey,
       ).encodePayload(),
     );
 
     final SshKexEcdhReplyMessage reply = SshKexEcdhReplyMessage.decodePayload(
-      (await _readPacketWithState(SshPlainPacketReaderState())).payload,
+      (await readPacket()).payload,
     );
     final BigInt sharedSecret = keyPair.computeSharedSecret(
       reply.serverEphemeralPublicKey,
@@ -230,8 +320,8 @@ class SshSecureSocketTransport implements SshPacketTransport {
     final Uint8List exchangeHash =
         const SshExchangeHashComputer().sha256FromInput(
       SshKexEcdhExchangeHashInput(
-        clientIdentification: exchange.localBanner.value,
-        serverIdentification: exchange.remoteBanner.value,
+        clientIdentification: localIdentification,
+        serverIdentification: remoteIdentification,
         clientKexInitPayload: clientKexInit.encodePayload(),
         serverKexInitPayload: serverKexInit.encodePayload(),
         hostKey: reply.hostKey,
@@ -254,10 +344,8 @@ class SshSecureSocketTransport implements SshPacketTransport {
       );
     }
 
-    await _writePlainPacket(const SshNewKeysMessage().encodePayload());
-    SshNewKeysMessage.decodePayload(
-      (await _readPacketWithState(SshPlainPacketReaderState())).payload,
-    );
+    await writePacket(const SshNewKeysMessage().encodePayload());
+    SshNewKeysMessage.decodePayload((await readPacket()).payload);
 
     final int clientIvLength = sshCipherBlockSize(
       negotiatedAlgorithms.encryptionClientToServer,
@@ -277,11 +365,14 @@ class SshSecureSocketTransport implements SshPacketTransport {
     final int serverMacKeyLength = sshMacKeyLength(
       negotiatedAlgorithms.macServerToClient,
     );
+    final List<int> effectiveSessionIdentifier = Uint8List.fromList(
+      sessionIdentifier ?? exchangeHash,
+    );
     final SshDerivedKeys derivedKeys = const SshKeyDerivation().deriveSha256(
       context: SshKeyDerivationContext(
         sharedSecret: sharedSecret,
         exchangeHash: exchangeHash,
-        sessionIdentifier: exchangeHash,
+        sessionIdentifier: effectiveSessionIdentifier,
       ),
       ivLength: max(clientIvLength, serverIvLength),
       encryptionKeyLength: max(clientKeyLength, serverKeyLength),
@@ -321,13 +412,234 @@ class SshSecureSocketTransport implements SshPacketTransport {
       codec: SshPacketCodec(blockSize: serverIvLength),
     );
 
-    return SshHandshakeInfo(
-      localIdentification: exchange.localBanner.value,
-      remoteIdentification: exchange.remoteBanner.value,
+    final SshHandshakeInfo handshake = SshHandshakeInfo(
+      localIdentification: localIdentification,
+      remoteIdentification: remoteIdentification,
       negotiatedAlgorithms: negotiatedAlgorithms.asHandshakeMap(),
-      sessionIdentifier: exchangeHash,
+      sessionIdentifier: effectiveSessionIdentifier,
       hostKey: reply.hostKey,
     );
+    return _SshKeyExchangeResult(
+      handshake: handshake,
+      negotiatedAlgorithms: negotiatedAlgorithms,
+    );
+  }
+
+  Future<void> _writeApplicationPacket(List<int> payload) async {
+    final Completer<void>? activeRekey = _activeRekey;
+    if (activeRekey != null) {
+      await activeRekey.future;
+    }
+
+    if (_shouldInitiateRekey()) {
+      await _beginClientRekey(force: false);
+    }
+
+    final Completer<void>? triggeredRekey = _activeRekey;
+    if (triggeredRekey != null) {
+      await triggeredRekey.future;
+    }
+
+    await _writeCurrentPacket(payload, countTowardsRekey: true);
+  }
+
+  Future<void> _writeCurrentPacket(
+    List<int> payload, {
+    required bool countTowardsRekey,
+  }) async {
+    final Uint8List encodedPacket = _writerState.encode(payload);
+    await writeBytes(encodedPacket);
+    if (countTowardsRekey) {
+      _sentPacketsSinceKeyExchange += 1;
+      _sentBytesSinceKeyExchange += encodedPacket.length;
+    }
+  }
+
+  Future<void> _beginClientRekey({required bool force}) async {
+    final Completer<void>? activeRekey = _activeRekey;
+    if (activeRekey != null) {
+      return activeRekey.future;
+    }
+
+    if (!force && !_shouldInitiateRekey()) {
+      return;
+    }
+
+    final Completer<void> completer = Completer<void>();
+    final SshKexInitMessage clientKexInit = _buildClientKexInit();
+    _activeRekey = completer;
+    _pendingClientKexInit = clientKexInit;
+
+    try {
+      await _writeCurrentPacket(
+        clientKexInit.encodePayload(),
+        countTowardsRekey: false,
+      );
+    } catch (error, stackTrace) {
+      _pendingClientKexInit = null;
+      _activeRekey = null;
+      if (!completer.isCompleted) {
+        completer.completeError(error, stackTrace);
+      }
+      rethrow;
+    }
+
+    await completer.future;
+  }
+
+  bool _shouldInitiateRekey() {
+    final DateTime? lastKeyExchangeAt = _lastKeyExchangeAt;
+    if (lastKeyExchangeAt == null) {
+      return false;
+    }
+
+    return rekeyPolicy.shouldRekey(
+      sentPackets: _sentPacketsSinceKeyExchange,
+      receivedPackets: _receivedPacketsSinceKeyExchange,
+      sentBytes: _sentBytesSinceKeyExchange,
+      receivedBytes: _receivedBytesSinceKeyExchange,
+      elapsed: DateTime.now().difference(lastKeyExchangeAt),
+    );
+  }
+
+  void _resetRekeyCounters() {
+    _sentPacketsSinceKeyExchange = 0;
+    _receivedPacketsSinceKeyExchange = 0;
+    _sentBytesSinceKeyExchange = 0;
+    _receivedBytesSinceKeyExchange = 0;
+    _lastKeyExchangeAt = DateTime.now();
+  }
+
+  void _startReadLoop() {
+    if (_readLoop != null) {
+      return;
+    }
+
+    _readLoop = _runReadLoop();
+  }
+
+  Future<void> _runReadLoop() async {
+    try {
+      for (;;) {
+        final SshBinaryPacket packet = await _readPacketWithState(_readerState);
+        final bool handledInternally = await _handleInternalPacket(packet);
+        if (handledInternally) {
+          continue;
+        }
+
+        _receivedPacketsSinceKeyExchange += 1;
+        _receivedBytesSinceKeyExchange += packet.frameLength;
+        _enqueuePacket(packet);
+
+        if (_shouldInitiateRekey()) {
+          unawaited(_beginClientRekey(force: false));
+        }
+      }
+    } catch (error, stackTrace) {
+      if (_state == SshTransportState.closed) {
+        return;
+      }
+      _terminalError = error;
+      _terminalStackTrace = stackTrace;
+      _failPending(error, stackTrace);
+    }
+  }
+
+  Future<bool> _handleInternalPacket(SshBinaryPacket packet) async {
+    switch (packet.messageId) {
+      case 20:
+        await _handleRekey(
+          SshKexInitMessage.decodePayload(packet.payload),
+        );
+        return true;
+      case 81:
+        return _completeGlobalRequestSuccess(packet.payload);
+      case 82:
+        return _completeGlobalRequestFailure(packet.payload);
+      default:
+        return false;
+    }
+  }
+
+  Future<void> _handleRekey(SshKexInitMessage serverKexInit) async {
+    final Completer<void> completer = _activeRekey ?? Completer<void>();
+    _activeRekey ??= completer;
+
+    try {
+      SshKexInitMessage clientKexInit =
+          _pendingClientKexInit ?? _buildClientKexInit();
+      if (_pendingClientKexInit == null) {
+        _pendingClientKexInit = clientKexInit;
+        await _writeCurrentPacket(
+          clientKexInit.encodePayload(),
+          countTowardsRekey: false,
+        );
+      }
+
+      final SshHandshakeInfo currentHandshake = _requireHandshake();
+      final _SshKeyExchangeResult keyExchange = await _runKeyExchangeRound(
+        localIdentification: currentHandshake.localIdentification,
+        remoteIdentification: currentHandshake.remoteIdentification,
+        clientKexInit: clientKexInit,
+        serverKexInit: serverKexInit,
+        sessionIdentifier: currentHandshake.sessionIdentifier,
+        writePacket: (List<int> payload) => _writeCurrentPacket(
+          payload,
+          countTowardsRekey: false,
+        ),
+        readPacket: () => _readPacketWithState(_readerState),
+      );
+
+      _handshake = keyExchange.handshake;
+      _resetRekeyCounters();
+      if (!completer.isCompleted) {
+        completer.complete();
+      }
+    } catch (error, stackTrace) {
+      if (!completer.isCompleted) {
+        completer.completeError(error, stackTrace);
+      }
+      rethrow;
+    } finally {
+      _pendingClientKexInit = null;
+      if (identical(_activeRekey, completer)) {
+        _activeRekey = null;
+      }
+    }
+  }
+
+  bool _completeGlobalRequestSuccess(List<int> payload) {
+    if (_pendingGlobalRequestReplies.isEmpty) {
+      return false;
+    }
+
+    final SshRequestSuccessMessage success =
+        SshRequestSuccessMessage.decodePayload(payload);
+    _pendingGlobalRequestReplies.removeFirst().complete(
+          SshGlobalRequestReply.success(responseData: success.responseData),
+        );
+    return true;
+  }
+
+  bool _completeGlobalRequestFailure(List<int> payload) {
+    if (_pendingGlobalRequestReplies.isEmpty) {
+      return false;
+    }
+
+    SshRequestFailureMessage.decodePayload(payload);
+    _pendingGlobalRequestReplies.removeFirst().complete(
+          SshGlobalRequestReply.failure(),
+        );
+    return true;
+  }
+
+  void _enqueuePacket(SshBinaryPacket packet) {
+    if (_pendingPacketReaders.isNotEmpty) {
+      _pendingPacketReaders.removeFirst().complete(packet);
+      return;
+    }
+
+    _packetQueue.addLast(packet);
   }
 
   SshKexInitMessage _buildClientKexInit() {
@@ -435,6 +747,34 @@ class SshSecureSocketTransport implements SshPacketTransport {
     return true;
   }
 
+  List<int> _resolveGlobalRequestData(SshGlobalRequest request) {
+    final Object? encodedPayload = request.payload['encodedPayload'];
+    if (encodedPayload == null) {
+      return const <int>[];
+    }
+    if (encodedPayload is List<int>) {
+      return encodedPayload;
+    }
+
+    throw ArgumentError.value(
+      encodedPayload,
+      'request.payload["encodedPayload"]',
+      'SSH global request payload must be a byte list.',
+    );
+  }
+
+  void _throwTerminalErrorIfNeeded() {
+    final Object? terminalError = _terminalError;
+    if (terminalError == null) {
+      return;
+    }
+
+    Error.throwWithStackTrace(
+      terminalError,
+      _terminalStackTrace ?? StackTrace.current,
+    );
+  }
+
   void _ensureConnected() {
     if (_state != SshTransportState.connected) {
       throw StateError('SSH secure socket transport is not connected.');
@@ -457,6 +797,32 @@ class SshSecureSocketTransport implements SshPacketTransport {
     return incoming;
   }
 
+  SshHandshakeInfo _requireHandshake() {
+    final SshHandshakeInfo? handshake = _handshake;
+    if (handshake == null) {
+      throw StateError('SSH secure socket transport has no handshake state.');
+    }
+    return handshake;
+  }
+
+  void _failPending(Object error, [StackTrace? stackTrace]) {
+    while (_pendingPacketReaders.isNotEmpty) {
+      _pendingPacketReaders.removeFirst().completeError(error, stackTrace);
+    }
+
+    while (_pendingGlobalRequestReplies.isNotEmpty) {
+      _pendingGlobalRequestReplies.removeFirst().completeError(
+            error,
+            stackTrace,
+          );
+    }
+
+    final Completer<void>? activeRekey = _activeRekey;
+    if (activeRekey != null && !activeRekey.isCompleted) {
+      activeRekey.completeError(error, stackTrace);
+    }
+  }
+
   Future<void> _closeResources() async {
     final StreamIterator<List<int>>? incoming = _incoming;
     final Socket? socket = _socket;
@@ -473,4 +839,14 @@ class SshSecureSocketTransport implements SshPacketTransport {
       socket.destroy();
     }
   }
+}
+
+class _SshKeyExchangeResult {
+  const _SshKeyExchangeResult({
+    required this.handshake,
+    required this.negotiatedAlgorithms,
+  });
+
+  final SshHandshakeInfo handshake;
+  final SshNegotiatedAlgorithms negotiatedAlgorithms;
 }

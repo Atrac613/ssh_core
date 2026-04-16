@@ -68,6 +68,72 @@ class SshGlobalRequest {
   final Map<String, Object?> payload;
 }
 
+class SshGlobalRequestReply {
+  SshGlobalRequestReply._({
+    required this.isSuccess,
+    List<int> responseData = const <int>[],
+  }) : responseData = Uint8List.fromList(responseData);
+
+  SshGlobalRequestReply.success({List<int> responseData = const <int>[]})
+      : this._(isSuccess: true, responseData: responseData);
+
+  SshGlobalRequestReply.failure()
+      : this._(isSuccess: false, responseData: const <int>[]);
+
+  final bool isSuccess;
+  final Uint8List responseData;
+}
+
+abstract class SshGlobalRequestReplyTransport implements SshTransport {
+  Future<SshGlobalRequestReply> sendGlobalRequestWithReply(
+    SshGlobalRequest request,
+  );
+}
+
+class SshRekeyPolicy {
+  const SshRekeyPolicy({
+    this.maxPackets = 1 << 20,
+    this.maxBytes = 1 << 30,
+    this.maxDuration = const Duration(hours: 1),
+  });
+
+  const SshRekeyPolicy.disabled()
+      : maxPackets = null,
+        maxBytes = null,
+        maxDuration = null;
+
+  final int? maxPackets;
+  final int? maxBytes;
+  final Duration? maxDuration;
+
+  bool shouldRekey({
+    required int sentPackets,
+    required int receivedPackets,
+    required int sentBytes,
+    required int receivedBytes,
+    required Duration elapsed,
+  }) {
+    final int? packetLimit = maxPackets;
+    if (packetLimit != null &&
+        (sentPackets >= packetLimit || receivedPackets >= packetLimit)) {
+      return true;
+    }
+
+    final int? byteLimit = maxBytes;
+    if (byteLimit != null &&
+        (sentBytes >= byteLimit || receivedBytes >= byteLimit)) {
+      return true;
+    }
+
+    final Duration? durationLimit = maxDuration;
+    if (durationLimit != null && elapsed >= durationLimit) {
+      return true;
+    }
+
+    return false;
+  }
+}
+
 abstract class SshTransport {
   SshTransportState get state;
 

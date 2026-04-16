@@ -2148,8 +2148,8 @@ Future<void> _exerciseSecureSocketTransport() async {
     final List<int> serverBuffer = <int>[];
     final SshPlainPacketReaderState plainReader = SshPlainPacketReaderState();
     final SshPlainPacketWriterState plainWriter = SshPlainPacketWriterState();
-    late final SshPacketReaderState protectedReader;
-    late final SshPacketWriterState protectedWriter;
+    late SshPacketReaderState protectedReader;
+    late SshPacketWriterState protectedWriter;
 
     try {
       final String clientBanner = await _readLine(iterator, serverBuffer);
@@ -2267,6 +2267,95 @@ Future<void> _exerciseSecureSocketTransport() async {
           .encode(const SshUserAuthSuccessMessage().encodePayload()));
       await socket.flush();
 
+      final SshKexInitMessage rekeyClientKexInit =
+          SshKexInitMessage.decodePayload(
+        (await _readPacketFromState(iterator, serverBuffer, protectedReader))
+            .payload,
+      );
+      final SshKexInitMessage rekeyServerKexInit = SshKexInitMessage(
+        cookie: List<int>.generate(16, (int index) => index + 21),
+        kexAlgorithms: const <String>[sshCurve25519Sha256],
+        serverHostKeyAlgorithms: const <String>[sshEd25519HostKeyAlgorithm],
+        encryptionAlgorithmsClientToServer: const <String>[sshAes128CtrCipher],
+        encryptionAlgorithmsServerToClient: const <String>[sshAes128CtrCipher],
+        macAlgorithmsClientToServer: const <String>[sshHmacSha256Mac],
+        macAlgorithmsServerToClient: const <String>[sshHmacSha256Mac],
+        compressionAlgorithmsClientToServer: const <String>[sshNoCompression],
+        compressionAlgorithmsServerToClient: const <String>[sshNoCompression],
+      );
+      socket.add(protectedWriter.encode(rekeyServerKexInit.encodePayload()));
+      await socket.flush();
+
+      final SshKexEcdhInitMessage rekeyClientEcdhInit =
+          SshKexEcdhInitMessage.decodePayload(
+        (await _readPacketFromState(iterator, serverBuffer, protectedReader))
+            .payload,
+      );
+      final SshCurve25519KeyPair rekeyServerKeyPair =
+          SshCurve25519KeyPair.generate();
+      final BigInt rekeySharedSecret = rekeyServerKeyPair.computeSharedSecret(
+        rekeyClientEcdhInit.clientEphemeralPublicKey,
+      );
+      final Uint8List rekeyExchangeHash =
+          const SshExchangeHashComputer().sha256FromInput(
+        SshKexEcdhExchangeHashInput(
+          clientIdentification: clientBanner,
+          serverIdentification: 'SSH-2.0-ssh_core-secure-server',
+          clientKexInitPayload: rekeyClientKexInit.encodePayload(),
+          serverKexInitPayload: rekeyServerKexInit.encodePayload(),
+          hostKey: trustedHostKey,
+          clientEphemeralPublicKey:
+              rekeyClientEcdhInit.clientEphemeralPublicKey,
+          serverEphemeralPublicKey: rekeyServerKeyPair.publicKey,
+          sharedSecret: rekeySharedSecret,
+        ),
+      );
+      final SshSignature rekeyExchangeHashSignature = SshSignature(
+        algorithm: sshEd25519HostKeyAlgorithm,
+        blob: hostSigningKey.sign(rekeyExchangeHash).signature.asTypedList,
+      );
+      socket.add(
+        protectedWriter.encode(
+          SshKexEcdhReplyMessage(
+            hostKey: trustedHostKey,
+            serverEphemeralPublicKey: rekeyServerKeyPair.publicKey,
+            exchangeHashSignature: rekeyExchangeHashSignature.encode(),
+          ).encodePayload(),
+        ),
+      );
+      socket.add(
+        protectedWriter.encode(const SshNewKeysMessage().encodePayload()),
+      );
+      await socket.flush();
+
+      SshNewKeysMessage.decodePayload(
+        (await _readPacketFromState(iterator, serverBuffer, protectedReader))
+            .payload,
+      );
+
+      final SshDerivedKeys rekeyDerivedKeys =
+          const SshKeyDerivation().deriveSha256(
+        context: SshKeyDerivationContext(
+          sharedSecret: rekeySharedSecret,
+          exchangeHash: rekeyExchangeHash,
+          sessionIdentifier: exchangeHash,
+        ),
+        ivLength: 16,
+        encryptionKeyLength: 16,
+        integrityKeyLength: 32,
+      );
+      protectedReader = SshAesCtrHmacPacketReaderState(
+        encryptionKey: rekeyDerivedKeys.encryptionKeyClientToServer,
+        initialVector: rekeyDerivedKeys.initialIvClientToServer,
+        macKey: rekeyDerivedKeys.integrityKeyClientToServer,
+        macAlgorithm: sshHmacSha256Mac,
+      );
+      protectedWriter = SshAesCtrHmacPacketWriterState(
+        encryptionKey: rekeyDerivedKeys.encryptionKeyServerToClient,
+        initialVector: rekeyDerivedKeys.initialIvServerToClient,
+        macKey: rekeyDerivedKeys.integrityKeyServerToClient,
+      );
+
       await socket.close();
       socket.destroy();
     } finally {
@@ -2301,13 +2390,17 @@ Future<void> _exerciseSecureSocketTransport() async {
 
   await client.connect();
   assert(client.isConnected);
+  final List<int> initialSessionIdentifier = List<int>.from(
+    transport.handshake!.sessionIdentifier ?? const <int>[],
+  );
   assert(
     transport.handshake!.negotiatedAlgorithms['kex'] == sshCurve25519Sha256,
   );
+  await transport.rekey();
   assert(
     _sameBytes(
       transport.handshake!.sessionIdentifier ?? const <int>[],
-      transport.handshake!.sessionIdentifier ?? const <int>[],
+      initialSessionIdentifier,
     ),
   );
 
