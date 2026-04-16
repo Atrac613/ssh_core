@@ -20,6 +20,7 @@ Implemented in this scaffold:
 - channel packet helpers for open/data/request/window/close flows
 - session and exec channel-request helpers including PTY/env/exit messages
 - SFTP packet helpers for init/version/open/read/write/status/name flows
+- forwarding packet helpers for `tcpip-forward` and TCP/IP channel payloads
 - transport payload/message codec and `SSH_MSG_KEXINIT` helper
 - transport global-request helpers for forwarding-related flows
 - transport algorithm negotiation for client/server `KEXINIT` proposals
@@ -49,7 +50,7 @@ Not implemented yet:
 - `pty`: terminal allocation and resize metadata
 - `exec`: non-interactive command execution
 - `sftp`: file transfer subsystem contracts and packet helpers
-- `port forwarding`: local, remote, and dynamic forwarding contracts
+- `port forwarding`: local, remote, and dynamic forwarding contracts and packet helpers
 
 ## Example
 

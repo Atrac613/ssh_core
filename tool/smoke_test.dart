@@ -13,6 +13,7 @@ Future<void> main() async {
   await _exerciseChannelProtocol();
   await _exerciseSessionProtocol();
   await _exerciseSftpProtocol();
+  await _exerciseForwardingProtocol();
   await _exerciseHostKeyVerification();
   await _exerciseSocketTransport();
 
@@ -924,6 +925,101 @@ Future<void> _exerciseSftpProtocol() async {
   );
   assert(decodedHandleRequest.type == SftpPacketType.readdir);
   assert(_sameBytes(decodedHandleRequest.handle, const <int>[13, 14, 15]));
+}
+
+Future<void> _exerciseForwardingProtocol() async {
+  final SshTcpIpForwardRequest remoteForward = const SshTcpIpForwardRequest(
+    bindHost: '0.0.0.0',
+    bindPort: 0,
+  );
+  final SshTcpIpForwardRequest decodedRemoteForward =
+      SshTcpIpForwardRequest.decode(remoteForward.encode());
+  assert(decodedRemoteForward.bindHost == '0.0.0.0');
+  assert(decodedRemoteForward.bindPort == 0);
+
+  final SshGlobalRequestMessage forwardGlobalRequest =
+      remoteForward.toGlobalRequest();
+  final SshGlobalRequestMessage decodedForwardGlobalRequest =
+      SshGlobalRequestMessage.decodePayload(
+          forwardGlobalRequest.encodePayload());
+  assert(decodedForwardGlobalRequest.requestName == sshTcpIpForwardRequestName);
+  assert(decodedForwardGlobalRequest.wantReply);
+  final SshTcpIpForwardRequest forwardedPayload =
+      SshTcpIpForwardRequest.decode(decodedForwardGlobalRequest.requestData);
+  assert(forwardedPayload.bindHost == '0.0.0.0');
+  assert(forwardedPayload.bindPort == 0);
+
+  final SshCancelTcpIpForwardRequest cancelForward =
+      const SshCancelTcpIpForwardRequest(
+    bindHost: '127.0.0.1',
+    bindPort: 8022,
+  );
+  final SshCancelTcpIpForwardRequest decodedCancelForward =
+      SshCancelTcpIpForwardRequest.decode(cancelForward.encode());
+  assert(decodedCancelForward.bindHost == '127.0.0.1');
+  assert(decodedCancelForward.bindPort == 8022);
+  final SshGlobalRequestMessage cancelGlobalRequest =
+      cancelForward.toGlobalRequest();
+  final SshGlobalRequestMessage decodedCancelGlobalRequest =
+      SshGlobalRequestMessage.decodePayload(
+          cancelGlobalRequest.encodePayload());
+  assert(
+    decodedCancelGlobalRequest.requestName == sshCancelTcpIpForwardRequestName,
+  );
+
+  final SshTcpIpForwardSuccessResponse successResponse =
+      const SshTcpIpForwardSuccessResponse(boundPort: 49152);
+  final SshTcpIpForwardSuccessResponse decodedSuccessResponse =
+      SshTcpIpForwardSuccessResponse.fromSuccessMessage(
+    successResponse.toSuccessMessage(),
+  );
+  assert(decodedSuccessResponse.boundPort == 49152);
+
+  final SshDirectTcpIpChannelOpenData directTcpIp =
+      const SshDirectTcpIpChannelOpenData(
+    targetHost: 'db.internal',
+    targetPort: 5432,
+    originatorHost: '127.0.0.1',
+    originatorPort: 40000,
+  );
+  final SshChannelOpenMessage directOpen = directTcpIp.toChannelOpenMessage(
+    senderChannel: 7,
+    localWindow:
+        const SshChannelWindow(initialSize: 65536, maxPacketSize: 8192),
+  );
+  final SshChannelOpenMessage decodedDirectOpen =
+      SshChannelOpenMessage.decodePayload(
+    directOpen.encodePayload(),
+  );
+  assert(decodedDirectOpen.channelType == sshDirectTcpIpChannelType);
+  assert(decodedDirectOpen.senderChannel == 7);
+  final SshDirectTcpIpChannelOpenData decodedDirectTcpIp =
+      SshDirectTcpIpChannelOpenData.fromChannelOpenMessage(decodedDirectOpen);
+  assert(decodedDirectTcpIp.targetHost == 'db.internal');
+  assert(decodedDirectTcpIp.targetPort == 5432);
+  assert(decodedDirectTcpIp.originatorHost == '127.0.0.1');
+  assert(decodedDirectTcpIp.originatorPort == 40000);
+
+  final SshForwardedTcpIpChannelOpenData forwardedTcpIp =
+      const SshForwardedTcpIpChannelOpenData(
+    connectedHost: '127.0.0.1',
+    connectedPort: 2222,
+    originatorHost: '203.0.113.10',
+    originatorPort: 50000,
+  );
+  final SshChannelOpenMessage forwardedOpen =
+      forwardedTcpIp.toChannelOpenMessage(senderChannel: 11);
+  final SshChannelOpenMessage decodedForwardedOpen =
+      SshChannelOpenMessage.decodePayload(forwardedOpen.encodePayload());
+  assert(decodedForwardedOpen.channelType == sshForwardedTcpIpChannelType);
+  final SshForwardedTcpIpChannelOpenData decodedForwardedTcpIp =
+      SshForwardedTcpIpChannelOpenData.fromChannelOpenMessage(
+    decodedForwardedOpen,
+  );
+  assert(decodedForwardedTcpIp.connectedHost == '127.0.0.1');
+  assert(decodedForwardedTcpIp.connectedPort == 2222);
+  assert(decodedForwardedTcpIp.originatorHost == '203.0.113.10');
+  assert(decodedForwardedTcpIp.originatorPort == 50000);
 }
 
 Future<void> _exerciseHostKeyVerification() async {
