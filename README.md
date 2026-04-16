@@ -19,6 +19,7 @@ Implemented in this scaffold:
 - protocol authenticator for `none`, `password`, `publickey`, and keyboard-interactive
 - channel packet helpers for open/data/request/window/close flows
 - packet-backed channel factory for open/request/data/close handling
+- packet-backed shell session manager and exec service
 - session and exec channel-request helpers including PTY/env/exit messages
 - SFTP packet helpers for init/version/open/read/write/status/name flows
 - forwarding packet helpers for `tcpip-forward` and TCP/IP channel payloads
