@@ -14,6 +14,7 @@ Future<void> main() async {
   await _exerciseSessionProtocol();
   await _exerciseSftpProtocol();
   await _exerciseForwardingProtocol();
+  await _exerciseSocks5Protocol();
   await _exerciseHostKeyVerification();
   await _exerciseSocketTransport();
 
@@ -1020,6 +1021,81 @@ Future<void> _exerciseForwardingProtocol() async {
   assert(decodedForwardedTcpIp.connectedPort == 2222);
   assert(decodedForwardedTcpIp.originatorHost == '203.0.113.10');
   assert(decodedForwardedTcpIp.originatorPort == 50000);
+}
+
+Future<void> _exerciseSocks5Protocol() async {
+  final SshSocks5Greeting greeting = SshSocks5Greeting(
+    methods: const <SshSocks5AuthMethod>[
+      SshSocks5AuthMethod.noAuth,
+      SshSocks5AuthMethod.usernamePassword,
+    ],
+  );
+  final SshSocks5Greeting decodedGreeting = SshSocks5Greeting.decode(
+    greeting.encode(),
+  );
+  assert(decodedGreeting.methods.length == 2);
+  assert(decodedGreeting.methods.first == SshSocks5AuthMethod.noAuth);
+  assert(
+    decodedGreeting.methods.last == SshSocks5AuthMethod.usernamePassword,
+  );
+
+  final SshSocks5MethodSelection methodSelection =
+      const SshSocks5MethodSelection(method: SshSocks5AuthMethod.noAuth);
+  final SshSocks5MethodSelection decodedMethodSelection =
+      SshSocks5MethodSelection.decode(methodSelection.encode());
+  assert(decodedMethodSelection.method == SshSocks5AuthMethod.noAuth);
+
+  final SshSocks5Request connectRequest = SshSocks5Request(
+    command: SshSocks5Command.connect,
+    destinationAddress: SshSocks5Address.domain('db.internal'),
+    destinationPort: 5432,
+  );
+  final SshSocks5Request decodedConnectRequest = SshSocks5Request.decode(
+    connectRequest.encode(),
+  );
+  assert(decodedConnectRequest.command == SshSocks5Command.connect);
+  assert(decodedConnectRequest.destinationAddress.host == 'db.internal');
+  assert(decodedConnectRequest.destinationPort == 5432);
+
+  final SshSocks5Reply reply = SshSocks5Reply(
+    replyCode: SshSocks5ReplyCode.succeeded,
+    boundAddress: SshSocks5Address.ipv4('127.0.0.1'),
+    boundPort: 1080,
+  );
+  final SshSocks5Reply decodedReply = SshSocks5Reply.decode(reply.encode());
+  assert(decodedReply.replyCode == SshSocks5ReplyCode.succeeded);
+  assert(decodedReply.boundAddress.host == '127.0.0.1');
+  assert(decodedReply.boundPort == 1080);
+
+  final SshSocks5Address ipv6Address = SshSocks5Address.ipv6Bytes(
+    addressBytes: const <int>[
+      0x20,
+      0x01,
+      0x0D,
+      0xB8,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x01,
+    ],
+  );
+  final SshSocks5Reply decodedIpv6Reply = SshSocks5Reply.decode(
+    SshSocks5Reply(
+      replyCode: SshSocks5ReplyCode.hostUnreachable,
+      boundAddress: ipv6Address,
+      boundPort: 0,
+    ).encode(),
+  );
+  assert(decodedIpv6Reply.boundAddress.type == SshSocks5AddressType.ipv6);
+  assert(decodedIpv6Reply.boundAddress.addressBytes.length == 16);
 }
 
 Future<void> _exerciseHostKeyVerification() async {

@@ -21,6 +21,7 @@ Implemented in this scaffold:
 - session and exec channel-request helpers including PTY/env/exit messages
 - SFTP packet helpers for init/version/open/read/write/status/name flows
 - forwarding packet helpers for `tcpip-forward` and TCP/IP channel payloads
+- SOCKS5 helpers for dynamic port-forward request and reply parsing
 - transport payload/message codec and `SSH_MSG_KEXINIT` helper
 - transport global-request helpers for forwarding-related flows
 - transport algorithm negotiation for client/server `KEXINIT` proposals

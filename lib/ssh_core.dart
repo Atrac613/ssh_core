@@ -11,6 +11,7 @@ export 'src/core/exceptions.dart';
 export 'src/exec/exec.dart';
 export 'src/forwarding/port_forwarding.dart';
 export 'src/forwarding/protocol.dart';
+export 'src/forwarding/socks.dart';
 export 'src/pty/pty.dart';
 export 'src/sessions/protocol.dart';
 export 'src/sessions/session.dart';
