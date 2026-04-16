@@ -22,6 +22,7 @@ Future<void> main() async {
   await _exerciseSocks5Protocol();
   await _exerciseHostKeyVerification();
   await _exerciseSocketTransport();
+  await _exerciseSecureSocketTransport();
 
   final SshHostKey trustedHostKey = _testHostKey();
   final client = SshClient(
@@ -1835,6 +1836,200 @@ Future<void> _exerciseSocketTransport() async {
   await server.close();
 }
 
+Future<void> _exerciseSecureSocketTransport() async {
+  final SigningKey hostSigningKey = SigningKey.generate();
+  final SshHostKey trustedHostKey = SshHostKey.decode(
+    (SshPayloadWriter()
+          ..writeString(sshEd25519HostKeyAlgorithm)
+          ..writeStringBytes(hostSigningKey.verifyKey.asTypedList))
+        .toBytes(),
+  );
+  final ServerSocket server = await ServerSocket.bind(
+    InternetAddress.loopbackIPv4,
+    0,
+  );
+
+  final Future<void> serverTask = () async {
+    final Socket socket = await server.first;
+    final StreamIterator<List<int>> iterator =
+        StreamIterator<List<int>>(socket);
+    final List<int> serverBuffer = <int>[];
+    final SshPlainPacketReaderState plainReader = SshPlainPacketReaderState();
+    final SshPlainPacketWriterState plainWriter = SshPlainPacketWriterState();
+    late final SshPacketReaderState protectedReader;
+    late final SshPacketWriterState protectedWriter;
+
+    try {
+      final String clientBanner = await _readLine(iterator, serverBuffer);
+      assert(clientBanner == 'SSH-2.0-ssh_core-secure-test');
+
+      socket.add(utf8.encode('SSH-2.0-ssh_core-secure-server\r\n'));
+      await socket.flush();
+
+      final SshKexInitMessage clientKexInit = SshKexInitMessage.decodePayload(
+        (await _readPacketFromState(iterator, serverBuffer, plainReader))
+            .payload,
+      );
+      final SshKexInitMessage serverKexInit = SshKexInitMessage(
+        cookie: List<int>.generate(16, (int index) => index + 1),
+        kexAlgorithms: const <String>[sshCurve25519Sha256],
+        serverHostKeyAlgorithms: const <String>[sshEd25519HostKeyAlgorithm],
+        encryptionAlgorithmsClientToServer: const <String>[sshAes128CtrCipher],
+        encryptionAlgorithmsServerToClient: const <String>[sshAes128CtrCipher],
+        macAlgorithmsClientToServer: const <String>[sshHmacSha256Mac],
+        macAlgorithmsServerToClient: const <String>[sshHmacSha256Mac],
+        compressionAlgorithmsClientToServer: const <String>[sshNoCompression],
+        compressionAlgorithmsServerToClient: const <String>[sshNoCompression],
+      );
+      socket.add(plainWriter.encode(serverKexInit.encodePayload()));
+      await socket.flush();
+
+      final SshKexEcdhInitMessage clientEcdhInit =
+          SshKexEcdhInitMessage.decodePayload(
+        (await _readPacketFromState(iterator, serverBuffer, plainReader))
+            .payload,
+      );
+      final SshCurve25519KeyPair serverKeyPair =
+          SshCurve25519KeyPair.generate();
+      final BigInt sharedSecret = serverKeyPair.computeSharedSecret(
+        clientEcdhInit.clientEphemeralPublicKey,
+      );
+      final Uint8List exchangeHash =
+          const SshExchangeHashComputer().sha256FromInput(
+        SshKexEcdhExchangeHashInput(
+          clientIdentification: clientBanner,
+          serverIdentification: 'SSH-2.0-ssh_core-secure-server',
+          clientKexInitPayload: clientKexInit.encodePayload(),
+          serverKexInitPayload: serverKexInit.encodePayload(),
+          hostKey: trustedHostKey,
+          clientEphemeralPublicKey: clientEcdhInit.clientEphemeralPublicKey,
+          serverEphemeralPublicKey: serverKeyPair.publicKey,
+          sharedSecret: sharedSecret,
+        ),
+      );
+      final SshSignature exchangeHashSignature = SshSignature(
+        algorithm: sshEd25519HostKeyAlgorithm,
+        blob: hostSigningKey.sign(exchangeHash).signature.asTypedList,
+      );
+      socket.add(
+        plainWriter.encode(
+          SshKexEcdhReplyMessage(
+            hostKey: trustedHostKey,
+            serverEphemeralPublicKey: serverKeyPair.publicKey,
+            exchangeHashSignature: exchangeHashSignature.encode(),
+          ).encodePayload(),
+        ),
+      );
+      socket.add(plainWriter.encode(const SshNewKeysMessage().encodePayload()));
+      await socket.flush();
+
+      SshNewKeysMessage.decodePayload(
+        (await _readPacketFromState(iterator, serverBuffer, plainReader))
+            .payload,
+      );
+
+      final SshDerivedKeys derivedKeys = const SshKeyDerivation().deriveSha256(
+        context: SshKeyDerivationContext(
+          sharedSecret: sharedSecret,
+          exchangeHash: exchangeHash,
+          sessionIdentifier: exchangeHash,
+        ),
+        ivLength: 16,
+        encryptionKeyLength: 16,
+        integrityKeyLength: 32,
+      );
+      protectedReader = SshAesCtrHmacPacketReaderState(
+        encryptionKey: derivedKeys.encryptionKeyClientToServer,
+        initialVector: derivedKeys.initialIvClientToServer,
+        macKey: derivedKeys.integrityKeyClientToServer,
+        macAlgorithm: sshHmacSha256Mac,
+      );
+      protectedWriter = SshAesCtrHmacPacketWriterState(
+        encryptionKey: derivedKeys.encryptionKeyServerToClient,
+        initialVector: derivedKeys.initialIvServerToClient,
+        macKey: derivedKeys.integrityKeyServerToClient,
+      );
+
+      final SshServiceRequestMessage serviceRequest =
+          SshServiceRequestMessage.decodePayload(
+        (await _readPacketFromState(iterator, serverBuffer, protectedReader))
+            .payload,
+      );
+      assert(serviceRequest.serviceName == sshUserauthService);
+      socket.add(
+        protectedWriter.encode(
+          const SshServiceAcceptMessage(serviceName: sshUserauthService)
+              .encodePayload(),
+        ),
+      );
+      await socket.flush();
+
+      final SshUserAuthRequestMessage authRequest =
+          SshUserAuthRequestMessage.decodePayload(
+        (await _readPacketFromState(iterator, serverBuffer, protectedReader))
+            .payload,
+      );
+      assert(authRequest.username == 'tester');
+      assert(authRequest.methodName == 'password');
+      socket.add(protectedWriter
+          .encode(const SshUserAuthSuccessMessage().encodePayload()));
+      await socket.flush();
+
+      await socket.close();
+      socket.destroy();
+    } finally {
+      await iterator.cancel();
+    }
+  }();
+
+  final SshSecureSocketTransport transport = SshSecureSocketTransport(
+    encryptionAlgorithms: const <String>[sshAes128CtrCipher],
+  );
+  final SshClient client = SshClient(
+    config: SshClientConfig(
+      host: InternetAddress.loopbackIPv4.address,
+      port: server.port,
+      username: 'tester',
+      transport: const SshTransportSettings(
+        clientIdentification: 'SSH-2.0-ssh_core-secure-test',
+      ),
+      hostKeyVerifier: SshStaticHostKeyVerifier(
+        trustedKeys: <SshTrustedHostKey>[
+          SshTrustedHostKey(
+            host: InternetAddress.loopbackIPv4.address,
+            port: server.port,
+            hostKey: trustedHostKey,
+          ),
+        ],
+      ),
+    ),
+    authMethods: const <SshAuthMethod>[SshPasswordAuthMethod(password: 'pw')],
+    transport: transport,
+    authenticator: const SshUserAuthProtocolAuthenticator(),
+    channelFactory: _FakeChannelFactory(),
+    sessionManager: _FakeSessionManager(),
+    execService: _FakeExecService(),
+    sftpSubsystem: _FakeSftpSubsystem(),
+    portForwardingService: _FakePortForwardingService(),
+  );
+
+  await client.connect();
+  assert(client.isConnected);
+  assert(
+    transport.handshake!.negotiatedAlgorithms['kex'] == sshCurve25519Sha256,
+  );
+  assert(
+    _sameBytes(
+      transport.handshake!.sessionIdentifier ?? const <int>[],
+      transport.handshake!.sessionIdentifier ?? const <int>[],
+    ),
+  );
+
+  await client.close();
+  await serverTask;
+  await server.close();
+}
+
 class _FakeTransport implements SshTransport {
   _FakeTransport({required SshHostKey hostKey}) : _hostKey = hostKey;
 
@@ -1892,6 +2087,54 @@ bool _sameBytes(List<int> left, List<int> right) {
   }
 
   return true;
+}
+
+Future<String> _readLine(
+  StreamIterator<List<int>> iterator,
+  List<int> buffer,
+) async {
+  for (;;) {
+    final int lineFeedIndex = buffer.indexOf(10);
+    if (lineFeedIndex >= 0) {
+      final int contentEnd =
+          lineFeedIndex > 0 && buffer[lineFeedIndex - 1] == 13
+              ? lineFeedIndex - 1
+              : lineFeedIndex;
+      final String line = utf8.decode(buffer.sublist(0, contentEnd));
+      buffer.removeRange(0, lineFeedIndex + 1);
+      return line;
+    }
+
+    final bool hasNext = await iterator.moveNext();
+    if (!hasNext) {
+      throw StateError('Socket closed before a line was received.');
+    }
+    buffer.addAll(iterator.current);
+  }
+}
+
+Future<SshBinaryPacket> _readPacketFromState(
+  StreamIterator<List<int>> iterator,
+  List<int> buffer,
+  SshPacketReaderState readerState,
+) async {
+  for (;;) {
+    final int? expectedLength = readerState.expectedFrameLength(buffer);
+    if (expectedLength != null && buffer.length >= expectedLength) {
+      final SshBinaryPacket? packet = readerState.tryRead(buffer);
+      if (packet == null) {
+        throw StateError('Packet state did not decode an SSH packet.');
+      }
+      buffer.removeRange(0, expectedLength);
+      return packet;
+    }
+
+    final bool hasNext = await iterator.moveNext();
+    if (!hasNext) {
+      throw StateError('Socket closed before a packet was received.');
+    }
+    buffer.addAll(iterator.current);
+  }
 }
 
 class _ScriptedPacketTransport implements SshPacketTransport {

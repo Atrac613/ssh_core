@@ -11,6 +11,8 @@ abstract class SshPacketWriterState {
 }
 
 abstract class SshPacketReaderState {
+  int? expectedFrameLength(List<int> buffer);
+
   SshBinaryPacket? tryRead(List<int> buffer);
 }
 
@@ -31,17 +33,21 @@ class SshPlainPacketReaderState implements SshPacketReaderState {
   final SshPacketCodec _codec;
 
   @override
-  SshBinaryPacket? tryRead(List<int> buffer) {
-    if (buffer.length < 5) {
+  int? expectedFrameLength(List<int> buffer) {
+    if (buffer.length < 4) {
       return null;
     }
 
     final int packetLength = _readUint32(buffer, 0);
-    final int frameLength = packetLength + 4;
-    if (buffer.length < frameLength) {
+    return packetLength + 4;
+  }
+
+  @override
+  SshBinaryPacket? tryRead(List<int> buffer) {
+    final int? frameLength = expectedFrameLength(buffer);
+    if (frameLength == null || buffer.length < frameLength) {
       return null;
     }
-
     return _codec.decode(buffer.sublist(0, frameLength));
   }
 }
@@ -106,8 +112,8 @@ class SshAesCtrHmacPacketReaderState implements SshPacketReaderState {
   int _sequenceNumber = 0;
 
   @override
-  SshBinaryPacket? tryRead(List<int> buffer) {
-    if (buffer.length < _cipher.blockSize + _macLength) {
+  int? expectedFrameLength(List<int> buffer) {
+    if (buffer.length < _cipher.blockSize) {
       return null;
     }
 
@@ -116,12 +122,17 @@ class SshAesCtrHmacPacketReaderState implements SshPacketReaderState {
       Uint8List.fromList(buffer.sublist(0, _cipher.blockSize)),
     );
     final int packetLength = _readUint32(firstBlock, 0);
-    final int frameLength = packetLength + 4;
-    final int requiredLength = frameLength + _macLength;
-    if (buffer.length < requiredLength) {
+    return packetLength + 4 + _macLength;
+  }
+
+  @override
+  SshBinaryPacket? tryRead(List<int> buffer) {
+    final int? requiredLength = expectedFrameLength(buffer);
+    if (requiredLength == null || buffer.length < requiredLength) {
       return null;
     }
 
+    final int frameLength = requiredLength - _macLength;
     final Uint8List encryptedPacket = Uint8List.fromList(
       buffer.sublist(0, frameLength),
     );
