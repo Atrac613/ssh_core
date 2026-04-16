@@ -83,12 +83,6 @@ class SshIoPortForwardingService implements SshPortForwardingService {
   }
 
   Future<SshPortForward> _openRemoteForward(SshForwardRequest request) async {
-    if (request.bindPort == 0) {
-      throw UnsupportedError(
-        'Remote forwarding requires an explicit bind port in the IO bridge.',
-      );
-    }
-
     final SshForwardTarget target = _requireTarget(request);
     final SshPortForward controlForward = await _protocolService.openForward(
       request,
@@ -100,9 +94,12 @@ class SshIoPortForwardingService implements SshPortForwardingService {
         return;
       }
 
+      final String? connectedHost =
+          inbound.openRequest.payload['connectedHost'] as String?;
       final int? connectedPort =
           inbound.openRequest.payload['connectedPort'] as int?;
-      if (connectedPort != request.bindPort) {
+      if (connectedHost != controlForward.bindHost ||
+          connectedPort != controlForward.bindPort) {
         return;
       }
 

@@ -1724,13 +1724,19 @@ Future<void> _exerciseForwardingProtocol() async {
 Future<void> _exerciseProtocolPortForwardingService() async {
   final _ScriptedPacketTransport transport = _ScriptedPacketTransport(
     scriptedPackets: const <List<int>>[],
+    scriptedGlobalRequestReplies: <SshGlobalRequestReply>[
+      SshGlobalRequestReply.success(
+        responseData: (SshPayloadWriter()..writeUint32(10022)).toBytes(),
+      ),
+      SshGlobalRequestReply.success(),
+    ],
   );
   final SshProtocolPortForwardingService service =
       SshProtocolPortForwardingService(transport: transport);
   final SshPortForward remoteForward = await service.openForward(
     const SshForwardRequest.remote(
       bindHost: '0.0.0.0',
-      bindPort: 10022,
+      bindPort: 0,
       target: SshForwardTarget(host: '127.0.0.1', port: 22),
     ),
   );
@@ -1905,6 +1911,12 @@ Future<void> _exerciseIoPortForwardingService() async {
         originatorPort: 55000,
       ).toChannelOpenMessage(senderChannel: 90).encodePayload(),
     ],
+    scriptedGlobalRequestReplies: <SshGlobalRequestReply>[
+      SshGlobalRequestReply.success(
+        responseData: (SshPayloadWriter()..writeUint32(4040)).toBytes(),
+      ),
+      SshGlobalRequestReply.success(),
+    ],
   );
   final SshPacketChannelFactory remoteFactory = SshPacketChannelFactory(
     transport: remoteTransport,
@@ -1916,7 +1928,7 @@ Future<void> _exerciseIoPortForwardingService() async {
   final SshPortForward remoteForward = await remoteService.openForward(
     SshForwardRequest.remote(
       bindHost: '127.0.0.1',
-      bindPort: 4040,
+      bindPort: 0,
       target: SshForwardTarget(
         host: InternetAddress.loopbackIPv4.address,
         port: targetServer.port,
@@ -1930,6 +1942,7 @@ Future<void> _exerciseIoPortForwardingService() async {
     remoteTransport.sentGlobalRequests.single.type ==
         sshTcpIpForwardRequestName,
   );
+  assert(remoteForward.bindPort == 4040);
   final SshChannelOpenConfirmationMessage remoteConfirmation =
       SshChannelOpenConfirmationMessage.decodePayload(
     remoteTransport.writtenPayloads.first,
@@ -2810,11 +2823,18 @@ Future<List<int>> _readSocketMessage(
   }
 }
 
-class _ScriptedPacketTransport implements SshPacketTransport {
-  _ScriptedPacketTransport({required List<List<int>> scriptedPackets})
-      : _scriptedPackets = List<List<int>>.from(scriptedPackets);
+class _ScriptedPacketTransport
+    implements SshPacketTransport, SshGlobalRequestReplyTransport {
+  _ScriptedPacketTransport({
+    required List<List<int>> scriptedPackets,
+    List<SshGlobalRequestReply> scriptedGlobalRequestReplies =
+        const <SshGlobalRequestReply>[],
+  })  : _scriptedPackets = List<List<int>>.from(scriptedPackets),
+        _scriptedGlobalRequestReplies =
+            List<SshGlobalRequestReply>.from(scriptedGlobalRequestReplies);
 
   final List<List<int>> _scriptedPackets;
+  final List<SshGlobalRequestReply> _scriptedGlobalRequestReplies;
   final List<List<int>> writtenPayloads = <List<int>>[];
   final List<SshGlobalRequest> sentGlobalRequests = <SshGlobalRequest>[];
 
@@ -2849,6 +2869,17 @@ class _ScriptedPacketTransport implements SshPacketTransport {
   @override
   Future<void> sendGlobalRequest(SshGlobalRequest request) async {
     sentGlobalRequests.add(request);
+  }
+
+  @override
+  Future<SshGlobalRequestReply> sendGlobalRequestWithReply(
+    SshGlobalRequest request,
+  ) async {
+    sentGlobalRequests.add(request);
+    if (_scriptedGlobalRequestReplies.isEmpty) {
+      return SshGlobalRequestReply.success();
+    }
+    return _scriptedGlobalRequestReplies.removeAt(0);
   }
 
   @override

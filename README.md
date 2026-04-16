@@ -27,6 +27,7 @@ Implemented in this scaffold:
 - SOCKS5 helpers for dynamic port-forward request and reply parsing
 - IO-backed local, remote, and dynamic port forwarding bridges
 - remote port-forward control service built on SSH global requests
+- remote port-forward control with server-assigned remote port support
 - transport payload/message codec and `SSH_MSG_KEXINIT` helper
 - transport global-request helpers for forwarding-related flows
 - transport algorithm negotiation for client/server `KEXINIT` proposals
@@ -48,8 +49,7 @@ Not implemented yet:
 
 - broader host-key curves, ciphers, and MACs beyond the current
   Ed25519/RSA/ECDSA + AES-CTR + HMAC-SHA2 set
-- remote forwarding with auto-assigned remote ports and advanced forwarding
-  variants
+- advanced forwarding variants beyond TCP local/remote/dynamic bridges
 
 ## Public modules
 
