@@ -19,26 +19,15 @@ class SshSecureSocketTransport
     this.tcpNoDelay = true,
     this.rekeyPolicy = const SshRekeyPolicy(),
     Random? random,
-    List<String> keyExchangeAlgorithms = const <String>[
-      sshCurve25519Sha256,
-      sshCurve25519Sha256LibSsh,
-    ],
-    List<String> serverHostKeyAlgorithms = const <String>[
-      sshEd25519HostKeyAlgorithm,
-      sshEcdsaSha2Nistp256HostKeyAlgorithm,
-      sshRsaSha512HostKeyAlgorithm,
-      sshRsaSha256HostKeyAlgorithm,
-    ],
-    List<String> encryptionAlgorithms = const <String>[
-      sshAes256CtrCipher,
-      sshAes192CtrCipher,
-      sshAes128CtrCipher,
-    ],
-    List<String> macAlgorithms = const <String>[
-      sshHmacSha512Mac,
-      sshHmacSha256Mac,
-    ],
-    List<String> compressionAlgorithms = const <String>[sshNoCompression],
+    List<String> keyExchangeAlgorithms =
+        SshTransportAlgorithms.defaultKeyExchangeAlgorithms,
+    List<String> serverHostKeyAlgorithms =
+        SshTransportAlgorithms.defaultServerHostKeyAlgorithms,
+    List<String> encryptionAlgorithms =
+        SshTransportAlgorithms.defaultEncryptionAlgorithms,
+    List<String> macAlgorithms = SshTransportAlgorithms.defaultMacAlgorithms,
+    List<String> compressionAlgorithms =
+        SshTransportAlgorithms.defaultCompressionAlgorithms,
   })  : _random = random ?? Random.secure(),
         keyExchangeAlgorithms = List.unmodifiable(keyExchangeAlgorithms),
         serverHostKeyAlgorithms = List.unmodifiable(serverHostKeyAlgorithms),
@@ -359,10 +348,10 @@ class SshSecureSocketTransport
     await writePacket(const SshNewKeysMessage().encodePayload());
     SshNewKeysMessage.decodePayload((await readPacket()).payload);
 
-    final int clientIvLength = sshCipherBlockSize(
+    final int clientIvLength = sshCipherIvLength(
       negotiatedAlgorithms.encryptionClientToServer,
     );
-    final int serverIvLength = sshCipherBlockSize(
+    final int serverIvLength = sshCipherIvLength(
       negotiatedAlgorithms.encryptionServerToClient,
     );
     final int clientKeyLength = sshCipherKeyLength(
@@ -691,33 +680,12 @@ class SshSecureSocketTransport
   }
 
   void _validateNegotiatedAlgorithms(SshNegotiatedAlgorithms negotiated) {
-    switch (negotiated.keyExchange) {
-      case sshCurve25519Sha256:
-      case sshCurve25519Sha256LibSsh:
-        break;
-      default:
-        throw SshTransportCryptoException(
-          'Unsupported SSH key exchange algorithm: ${negotiated.keyExchange}.',
-        );
-    }
-
-    switch (negotiated.serverHostKey) {
-      case sshEd25519HostKeyAlgorithm:
-      case sshRsaHostKeyType:
-      case sshRsaSha256HostKeyAlgorithm:
-      case sshRsaSha512HostKeyAlgorithm:
-      case sshEcdsaSha2Nistp256HostKeyAlgorithm:
-        break;
-      default:
-        throw SshTransportCryptoException(
-          'Unsupported SSH host key algorithm: ${negotiated.serverHostKey}.',
-        );
-    }
-
-    sshCipherKeyLength(negotiated.encryptionClientToServer);
-    sshCipherKeyLength(negotiated.encryptionServerToClient);
-    sshMacKeyLength(negotiated.macClientToServer);
-    sshMacKeyLength(negotiated.macServerToClient);
+    _requireKeyExchangeAlgorithm(negotiated.keyExchange);
+    _requireHostKeyAlgorithm(negotiated.serverHostKey);
+    _requireCipherAlgorithm(negotiated.encryptionClientToServer);
+    _requireCipherAlgorithm(negotiated.encryptionServerToClient);
+    _requireMacAlgorithm(negotiated.macClientToServer);
+    _requireMacAlgorithm(negotiated.macServerToClient);
     _validateCompressionAlgorithm(negotiated.compressionClientToServer);
     _validateCompressionAlgorithm(negotiated.compressionServerToClient);
   }
@@ -758,30 +726,11 @@ class SshSecureSocketTransport
   }
 
   void _validateCompressionAlgorithm(String algorithm) {
-    switch (algorithm) {
-      case sshNoCompression:
-      case sshZlibCompression:
-      case sshZlibOpenSshCompression:
-        return;
-    }
-
-    throw SshTransportCryptoException(
-      'Unsupported SSH compression algorithm: $algorithm.',
-    );
+    _requireCompressionAlgorithm(algorithm);
   }
 
   String _normalizeCompressionAlgorithm(String algorithm) {
-    switch (algorithm) {
-      case sshNoCompression:
-        return sshNoCompression;
-      case sshZlibCompression:
-      case sshZlibOpenSshCompression:
-        return sshZlibCompression;
-    }
-
-    throw SshTransportCryptoException(
-      'Unsupported SSH compression algorithm: $algorithm.',
-    );
+    return _requireCompressionAlgorithm(algorithm).normalizedName;
   }
 
   _SshCompressionState _createCompressionState(String algorithm) {
@@ -795,6 +744,56 @@ class SshSecureSocketTransport
     throw SshTransportCryptoException(
       'Unsupported SSH compression algorithm: $algorithm.',
     );
+  }
+
+  void _requireKeyExchangeAlgorithm(String algorithm) {
+    try {
+      SshTransportAlgorithms.keyExchangeAlgorithm(algorithm);
+    } on ArgumentError {
+      throw SshTransportCryptoException(
+        'Unsupported SSH key exchange algorithm: $algorithm.',
+      );
+    }
+  }
+
+  void _requireHostKeyAlgorithm(String algorithm) {
+    try {
+      SshTransportAlgorithms.hostKeyAlgorithm(algorithm);
+    } on ArgumentError {
+      throw SshTransportCryptoException(
+        'Unsupported SSH host key algorithm: $algorithm.',
+      );
+    }
+  }
+
+  void _requireCipherAlgorithm(String algorithm) {
+    try {
+      SshTransportAlgorithms.cipherAlgorithm(algorithm);
+    } on ArgumentError {
+      throw SshTransportCryptoException(
+        'Unsupported SSH encryption algorithm: $algorithm.',
+      );
+    }
+  }
+
+  void _requireMacAlgorithm(String algorithm) {
+    try {
+      SshTransportAlgorithms.macAlgorithm(algorithm);
+    } on ArgumentError {
+      throw SshTransportCryptoException(
+        'Unsupported SSH MAC algorithm: $algorithm.',
+      );
+    }
+  }
+
+  SshCompressionAlgorithm _requireCompressionAlgorithm(String algorithm) {
+    try {
+      return SshTransportAlgorithms.compressionAlgorithm(algorithm);
+    } on ArgumentError {
+      throw SshTransportCryptoException(
+        'Unsupported SSH compression algorithm: $algorithm.',
+      );
+    }
   }
 
   Future<void> _writePlainPacket(List<int> payload) async {

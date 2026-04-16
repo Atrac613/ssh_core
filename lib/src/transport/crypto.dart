@@ -5,26 +5,13 @@ import 'package:pinenacl/tweetnacl.dart';
 import 'package:pointycastle/asymmetric/api.dart' as asymmetric;
 import 'package:pointycastle/export.dart' hide Signature;
 
+import 'algorithms.dart';
 import 'host_key.dart';
 import 'key_exchange.dart';
 import 'message_codec.dart';
 import 'signature.dart';
 
-const String sshCurve25519Sha256 = 'curve25519-sha256';
-const String sshCurve25519Sha256LibSsh = 'curve25519-sha256@libssh.org';
-const String sshEd25519HostKeyAlgorithm = 'ssh-ed25519';
-const String sshRsaHostKeyType = 'ssh-rsa';
-const String sshRsaSha256HostKeyAlgorithm = 'rsa-sha2-256';
-const String sshRsaSha512HostKeyAlgorithm = 'rsa-sha2-512';
-const String sshEcdsaSha2Nistp256HostKeyAlgorithm = 'ecdsa-sha2-nistp256';
-const String sshAes128CtrCipher = 'aes128-ctr';
-const String sshAes192CtrCipher = 'aes192-ctr';
-const String sshAes256CtrCipher = 'aes256-ctr';
-const String sshHmacSha256Mac = 'hmac-sha2-256';
-const String sshHmacSha512Mac = 'hmac-sha2-512';
-const String sshNoCompression = 'none';
-const String sshZlibCompression = 'zlib';
-const String sshZlibOpenSshCompression = 'zlib@openssh.com';
+export 'algorithms.dart';
 
 class SshTransportCryptoException implements Exception {
   const SshTransportCryptoException(this.message);
@@ -212,32 +199,31 @@ class SshHostKeySignatureVerifier {
   }) {
     final String expectedAlgorithm =
         negotiatedHostKeyAlgorithm ?? hostKey.algorithm;
+    final SshHostKeyAlgorithm algorithm = _hostKeyAlgorithm(expectedAlgorithm);
 
-    switch (expectedAlgorithm) {
-      case sshEd25519HostKeyAlgorithm:
-        return _verifyEd25519(
-          hostKey: hostKey,
-          signature: signature,
-          exchangeHash: exchangeHash,
-        );
-      case sshRsaHostKeyType:
-      case sshRsaSha256HostKeyAlgorithm:
-      case sshRsaSha512HostKeyAlgorithm:
-        return _verifyRsa(
-          hostKey: hostKey,
-          signature: signature,
-          exchangeHash: exchangeHash,
-          algorithm: expectedAlgorithm,
-        );
-      case sshEcdsaSha2Nistp256HostKeyAlgorithm:
-        return _verifyEcdsa(
-          hostKey: hostKey,
-          signature: signature,
-          exchangeHash: exchangeHash,
-          algorithm: expectedAlgorithm,
-        );
+    if (algorithm.isEd25519) {
+      return _verifyEd25519(
+        hostKey: hostKey,
+        signature: signature,
+        exchangeHash: exchangeHash,
+      );
     }
-
+    if (algorithm.isRsa) {
+      return _verifyRsa(
+        hostKey: hostKey,
+        signature: signature,
+        exchangeHash: exchangeHash,
+        algorithm: algorithm,
+      );
+    }
+    if (algorithm.isEcdsa) {
+      return _verifyEcdsa(
+        hostKey: hostKey,
+        signature: signature,
+        exchangeHash: exchangeHash,
+        algorithm: algorithm,
+      );
+    }
     throw SshTransportCryptoException(
       'Unsupported SSH host key algorithm: $expectedAlgorithm.',
     );
@@ -275,16 +261,16 @@ class SshHostKeySignatureVerifier {
     required SshHostKey hostKey,
     required SshSignature signature,
     required List<int> exchangeHash,
-    required String algorithm,
+    required SshHostKeyAlgorithm algorithm,
   }) {
-    if (hostKey.algorithm != sshRsaHostKeyType) {
+    if (hostKey.algorithm != algorithm.hostKeyType) {
       throw SshTransportCryptoException(
         'Expected an ssh-rsa host key, received ${hostKey.algorithm}.',
       );
     }
-    if (signature.algorithm != algorithm) {
+    if (signature.algorithm != algorithm.name) {
       throw SshTransportCryptoException(
-        'Expected an $algorithm signature, received ${signature.algorithm}.',
+        'Expected an ${algorithm.name} signature, received ${signature.algorithm}.',
       );
     }
 
@@ -316,25 +302,25 @@ class SshHostKeySignatureVerifier {
     required SshHostKey hostKey,
     required SshSignature signature,
     required List<int> exchangeHash,
-    required String algorithm,
+    required SshHostKeyAlgorithm algorithm,
   }) {
-    if (hostKey.algorithm != algorithm) {
+    if (hostKey.algorithm != algorithm.name) {
       throw SshTransportCryptoException(
-        'Expected an $algorithm host key, received ${hostKey.algorithm}.',
+        'Expected an ${algorithm.name} host key, received ${hostKey.algorithm}.',
       );
     }
-    if (signature.algorithm != algorithm) {
+    if (signature.algorithm != algorithm.name) {
       throw SshTransportCryptoException(
-        'Expected an $algorithm signature, received ${signature.algorithm}.',
+        'Expected an ${algorithm.name} signature, received ${signature.algorithm}.',
       );
     }
 
     final SshPayloadReader hostKeyReader =
         SshPayloadReader(hostKey.encodedBytes);
     final String keyType = hostKeyReader.readString();
-    if (keyType != algorithm) {
+    if (keyType != algorithm.name) {
       throw SshTransportCryptoException(
-        'Expected an $algorithm host key, received $keyType.',
+        'Expected an ${algorithm.name} host key, received $keyType.',
       );
     }
     final String curveName = hostKeyReader.readString();
@@ -364,57 +350,23 @@ class SshHostKeySignatureVerifier {
 }
 
 int sshCipherKeyLength(String algorithm) {
-  switch (algorithm) {
-    case sshAes128CtrCipher:
-      return 16;
-    case sshAes192CtrCipher:
-      return 24;
-    case sshAes256CtrCipher:
-      return 32;
-  }
-
-  throw SshTransportCryptoException(
-    'Unsupported SSH encryption algorithm: $algorithm.',
-  );
+  return _cipherAlgorithm(algorithm).keyLength;
 }
 
 int sshCipherBlockSize(String algorithm) {
-  switch (algorithm) {
-    case sshAes128CtrCipher:
-    case sshAes192CtrCipher:
-    case sshAes256CtrCipher:
-      return 16;
-  }
+  return _cipherAlgorithm(algorithm).blockSize;
+}
 
-  throw SshTransportCryptoException(
-    'Unsupported SSH encryption algorithm: $algorithm.',
-  );
+int sshCipherIvLength(String algorithm) {
+  return _cipherAlgorithm(algorithm).ivLength;
 }
 
 int sshMacKeyLength(String algorithm) {
-  switch (algorithm) {
-    case sshHmacSha256Mac:
-      return 32;
-    case sshHmacSha512Mac:
-      return 64;
-  }
-
-  throw SshTransportCryptoException(
-    'Unsupported SSH MAC algorithm: $algorithm.',
-  );
+  return _macAlgorithm(algorithm).keyLength;
 }
 
 int sshMacLength(String algorithm) {
-  switch (algorithm) {
-    case sshHmacSha256Mac:
-      return 32;
-    case sshHmacSha512Mac:
-      return 64;
-  }
-
-  throw SshTransportCryptoException(
-    'Unsupported SSH MAC algorithm: $algorithm.',
-  );
+  return _macAlgorithm(algorithm).macLength;
 }
 
 BigInt _decodeUnsignedBigInt(List<int> bytes) {
@@ -425,18 +377,18 @@ BigInt _decodeUnsignedBigInt(List<int> bytes) {
   return value;
 }
 
-RSASigner _rsaSignerForAlgorithm(String algorithm) {
-  switch (algorithm) {
-    case sshRsaHostKeyType:
+RSASigner _rsaSignerForAlgorithm(SshHostKeyAlgorithm algorithm) {
+  switch (algorithm.digestName) {
+    case 'sha1':
       return RSASigner(SHA1Digest(), '06052b0e03021a');
-    case sshRsaSha256HostKeyAlgorithm:
+    case 'sha256':
       return RSASigner(SHA256Digest(), '0609608648016503040201');
-    case sshRsaSha512HostKeyAlgorithm:
+    case 'sha512':
       return RSASigner(SHA512Digest(), '0609608648016503040203');
   }
 
   throw SshTransportCryptoException(
-    'Unsupported SSH RSA signature algorithm: $algorithm.',
+    'Unsupported SSH RSA signature algorithm: ${algorithm.name}.',
   );
 }
 
@@ -460,4 +412,34 @@ Digest _ecdsaDigestForCurve(String curveName) {
   throw SshTransportCryptoException(
     'Unsupported SSH ECDSA curve: $curveName.',
   );
+}
+
+SshCipherAlgorithm _cipherAlgorithm(String algorithm) {
+  try {
+    return SshTransportAlgorithms.cipherAlgorithm(algorithm);
+  } on ArgumentError {
+    throw SshTransportCryptoException(
+      'Unsupported SSH encryption algorithm: $algorithm.',
+    );
+  }
+}
+
+SshMacAlgorithm _macAlgorithm(String algorithm) {
+  try {
+    return SshTransportAlgorithms.macAlgorithm(algorithm);
+  } on ArgumentError {
+    throw SshTransportCryptoException(
+      'Unsupported SSH MAC algorithm: $algorithm.',
+    );
+  }
+}
+
+SshHostKeyAlgorithm _hostKeyAlgorithm(String algorithm) {
+  try {
+    return SshTransportAlgorithms.hostKeyAlgorithm(algorithm);
+  } on ArgumentError {
+    throw SshTransportCryptoException(
+      'Unsupported SSH host key algorithm: $algorithm.',
+    );
+  }
 }
