@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'host_key.dart';
 import 'message_codec.dart';
+import 'signature.dart';
 
 class SshAlgorithmNegotiationException implements Exception {
   const SshAlgorithmNegotiationException({
@@ -265,6 +266,9 @@ class SshKexEcdhReplyMessage {
   final Uint8List serverEphemeralPublicKey;
   final Uint8List exchangeHashSignature;
 
+  SshSignature get decodedExchangeHashSignature =>
+      SshSignature.decode(exchangeHashSignature);
+
   Uint8List encodePayload() {
     final SshPayloadWriter writer = SshPayloadWriter()
       ..writeByte(SshMessageId.kexEcdhReply.value)
@@ -309,6 +313,30 @@ class SshKexEcdhExchangeHashInput {
       ..writeStringBytes(clientEphemeralPublicKey)
       ..writeStringBytes(serverEphemeralPublicKey)
       ..writeMpInt(sharedSecret);
+    return writer.toBytes();
+  }
+}
+
+class SshNewKeysMessage {
+  const SshNewKeysMessage();
+
+  factory SshNewKeysMessage.decodePayload(List<int> payload) {
+    final SshPayloadReader reader = SshPayloadReader(payload);
+    final int messageId = reader.readByte();
+    if (messageId != SshMessageId.newKeys.value) {
+      throw FormatException(
+        'Expected SSH_MSG_NEWKEYS (${SshMessageId.newKeys.value}), '
+        'received $messageId.',
+      );
+    }
+
+    reader.expectDone();
+    return const SshNewKeysMessage();
+  }
+
+  Uint8List encodePayload() {
+    final SshPayloadWriter writer = SshPayloadWriter()
+      ..writeByte(SshMessageId.newKeys.value);
     return writer.toBytes();
   }
 }

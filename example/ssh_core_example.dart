@@ -107,10 +107,14 @@ class DemoTransport implements SshTransport {
     final SshKexEcdhInitMessage clientKeyExchange = SshKexEcdhInitMessage(
       clientEphemeralPublicKey: const <int>[3, 1, 4, 1, 5],
     );
+    final SshSignature exchangeHashSignature = SshSignature(
+      algorithm: 'ssh-ed25519',
+      blob: const <int>[3, 5, 8, 9],
+    );
     final SshKexEcdhReplyMessage serverKeyExchange = SshKexEcdhReplyMessage(
       hostKey: _hostKey,
       serverEphemeralPublicKey: const <int>[9, 2, 6, 5],
-      exchangeHashSignature: const <int>[3, 5, 8, 9],
+      exchangeHashSignature: exchangeHashSignature.encode(),
     );
     assert(
       SshKexEcdhExchangeHashInput(

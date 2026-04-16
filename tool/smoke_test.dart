@@ -198,14 +198,21 @@ Future<void> _exerciseTransportPrimitives() async {
   );
 
   final SshHostKey hostKey = _testHostKey();
+  final SshSignature signature = SshSignature(
+    algorithm: 'ssh-ed25519',
+    blob: const <int>[9, 7, 5, 3],
+  );
+  final SshSignature decodedSignature = SshSignature.decode(signature.encode());
+  assert(decodedSignature.matches(signature));
   final SshKexEcdhReplyMessage ecdhReply = SshKexEcdhReplyMessage(
     hostKey: hostKey,
     serverEphemeralPublicKey: const <int>[2, 4, 6, 8],
-    exchangeHashSignature: const <int>[9, 7, 5, 3],
+    exchangeHashSignature: signature.encode(),
   );
   final SshKexEcdhReplyMessage decodedEcdhReply =
       SshKexEcdhReplyMessage.decodePayload(ecdhReply.encodePayload());
   assert(decodedEcdhReply.hostKey.matches(hostKey));
+  assert(decodedEcdhReply.decodedExchangeHashSignature.matches(signature));
   assert(
     _sameBytes(
       decodedEcdhReply.serverEphemeralPublicKey,
@@ -215,7 +222,7 @@ Future<void> _exerciseTransportPrimitives() async {
   assert(
     _sameBytes(
       decodedEcdhReply.exchangeHashSignature,
-      ecdhReply.exchangeHashSignature,
+      signature.encode(),
     ),
   );
 
@@ -260,6 +267,12 @@ Future<void> _exerciseTransportPrimitives() async {
   );
   assert(exchangeHashSharedSecret == BigInt.from(0x123456));
   exchangeHashReader.expectDone();
+
+  final SshNewKeysMessage newKeys = const SshNewKeysMessage();
+  final SshNewKeysMessage decodedNewKeys = SshNewKeysMessage.decodePayload(
+    newKeys.encodePayload(),
+  );
+  assert(decodedNewKeys.encodePayload().single == SshMessageId.newKeys.value);
 
   final SshAlgorithmNegotiator negotiator = const SshAlgorithmNegotiator();
   final SshNegotiatedAlgorithms negotiatedAlgorithms = negotiator.negotiate(

@@ -13,4 +13,5 @@ export 'src/sftp/sftp.dart';
 export 'src/transport/host_key.dart';
 export 'src/transport/key_exchange.dart';
 export 'src/transport/message_codec.dart';
+export 'src/transport/signature.dart';
 export 'src/transport/transport.dart';
