@@ -10,6 +10,7 @@ Future<void> main() async {
   await _exerciseAuthProtocol();
   await _exerciseProtocolAuthenticator();
   await _exerciseChannelProtocol();
+  await _exerciseSessionProtocol();
   await _exerciseHostKeyVerification();
   await _exerciseSocketTransport();
 
@@ -623,6 +624,86 @@ Future<void> _exerciseChannelProtocol() async {
   final SshChannelCloseMessage decodedClose =
       SshChannelCloseMessage.decodePayload(close.encodePayload());
   assert(decodedClose.recipientChannel == 1);
+}
+
+Future<void> _exerciseSessionProtocol() async {
+  final SshEnvChannelRequest env = const SshEnvChannelRequest(
+    name: 'LANG',
+    value: 'en_US.UTF-8',
+  );
+  final SshEnvChannelRequest decodedEnv = SshEnvChannelRequest.decode(
+    env.encode(),
+  );
+  assert(decodedEnv.name == 'LANG');
+  assert(decodedEnv.value == 'en_US.UTF-8');
+  assert(env.toChannelRequestMessage(1).requestType == 'env');
+
+  final SshPtyConfig pty = const SshPtyConfig(
+    terminalType: 'xterm-256color',
+    columns: 120,
+    rows: 40,
+    modes: <SshPtyMode, int>{
+      SshPtyMode.echo: 1,
+      SshPtyMode.signals: 1,
+    },
+  );
+  final SshPtyChannelRequest ptyRequest = SshPtyChannelRequest(pty: pty);
+  final SshPtyChannelRequest decodedPtyRequest = SshPtyChannelRequest.decode(
+    ptyRequest.encode(),
+  );
+  assert(decodedPtyRequest.pty.columns == 120);
+  assert(decodedPtyRequest.pty.rows == 40);
+  assert(decodedPtyRequest.pty.modes[SshPtyMode.echo] == 1);
+  assert(ptyRequest.toChannelRequestMessage(1).requestType == 'pty-req');
+
+  final SshWindowChangeChannelRequest windowChange =
+      const SshWindowChangeChannelRequest(
+    columns: 140,
+    rows: 50,
+  );
+  final SshWindowChangeChannelRequest decodedWindowChange =
+      SshWindowChangeChannelRequest.decode(windowChange.encode());
+  assert(decodedWindowChange.columns == 140);
+  assert(
+      windowChange.toChannelRequestMessage(1).requestType == 'window-change');
+
+  final SshShellChannelRequest shell = const SshShellChannelRequest();
+  final SshShellChannelRequest decodedShell = SshShellChannelRequest.decode(
+    shell.encode(),
+  );
+  assert(decodedShell.toChannelRequestMessage(1).requestType == 'shell');
+
+  final SshExecChannelRequest exec = const SshExecChannelRequest(
+    command: 'uname -a',
+  );
+  final SshExecChannelRequest decodedExec = SshExecChannelRequest.decode(
+    exec.encode(),
+  );
+  assert(decodedExec.command == 'uname -a');
+  assert(exec.toChannelRequestMessage(1).requestType == 'exec');
+
+  final SshSubsystemChannelRequest subsystem =
+      const SshSubsystemChannelRequest(subsystem: 'sftp');
+  final SshSubsystemChannelRequest decodedSubsystem =
+      SshSubsystemChannelRequest.decode(subsystem.encode());
+  assert(decodedSubsystem.subsystem == 'sftp');
+
+  final SshExitStatusChannelRequest exitStatus =
+      const SshExitStatusChannelRequest(exitStatus: 23);
+  final SshExitStatusChannelRequest decodedExitStatus =
+      SshExitStatusChannelRequest.decode(exitStatus.encode());
+  assert(decodedExitStatus.exitStatus == 23);
+
+  final SshExitSignalChannelRequest exitSignal =
+      const SshExitSignalChannelRequest(
+    signalName: 'TERM',
+    coreDumped: false,
+    errorMessage: 'Terminated.',
+  );
+  final SshExitSignalChannelRequest decodedExitSignal =
+      SshExitSignalChannelRequest.decode(exitSignal.encode());
+  assert(decodedExitSignal.signalName == 'TERM');
+  assert(decodedExitSignal.errorMessage == 'Terminated.');
 }
 
 Future<void> _exerciseHostKeyVerification() async {

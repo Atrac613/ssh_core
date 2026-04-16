@@ -11,6 +11,7 @@ export 'src/core/exceptions.dart';
 export 'src/exec/exec.dart';
 export 'src/forwarding/port_forwarding.dart';
 export 'src/pty/pty.dart';
+export 'src/sessions/protocol.dart';
 export 'src/sessions/session.dart';
 export 'src/sftp/sftp.dart';
 export 'src/transport/host_key.dart';

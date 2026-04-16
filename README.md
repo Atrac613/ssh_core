@@ -18,6 +18,7 @@ Implemented in this scaffold:
 - auth service and userauth packet helpers for protocol flows
 - protocol authenticator for `none`, `password`, and keyboard-interactive
 - channel packet helpers for open/data/request/window/close flows
+- session and exec channel-request helpers including PTY/env/exit messages
 - transport payload/message codec and `SSH_MSG_KEXINIT` helper
 - transport algorithm negotiation for client/server `KEXINIT` proposals
 - host key parsing and verifier contracts for the pre-auth handshake
@@ -42,6 +43,7 @@ Not implemented yet:
 - `auth`: authentication strategies, auth results, and userauth packet helpers
 - `channels`: generic channel lifecycle and channel packet helpers
 - `sessions`: shell/session abstractions
+- `sessions`: shell/session abstractions and session channel-request helpers
 - `pty`: terminal allocation and resize metadata
 - `exec`: non-interactive command execution
 - `sftp`: file transfer subsystem contracts
