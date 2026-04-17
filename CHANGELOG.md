@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0-dev.2
+
+- Clarified in the README that the package is public but still not ready for
+  general use.
+- Updated the hosted dependency example to match the current prerelease.
+
 ## 0.1.0-dev.1
 
 - First public prerelease of `ssh_core`.

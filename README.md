@@ -12,16 +12,13 @@ packages or applications can compose the pieces they need.
 
 ## Status
 
-This repository is public and useful today for:
-
-- SSH protocol exploration and interoperability work
-- building custom SSH clients on top of packet-capable abstractions
-- iterating on transport/auth/channel behavior in pure Dart
+This repository is public, but it is still not ready for use.
 
 Current status:
 
-- the package is still experimental
-- `publish_to: none` is still set, so it is not ready for `pub.dev`
+- the package is published on `pub.dev` as an experimental prerelease
+- it is useful for SSH protocol exploration and interoperability work
+- it is not ready for production use or general application integration yet
 - the public API is intentionally small, but some low-level transport details
   are still evolving
 
@@ -57,11 +54,15 @@ Current status:
 
 ## Getting Started
 
+The package is published on `pub.dev`, but it is still not ready for general
+use. Treat the current release as an experimental prerelease for protocol work
+and early evaluation.
+
 Use a hosted dependency when consuming a published release:
 
 ```yaml
 dependencies:
-  ssh_core: ^0.1.0-dev.1
+  ssh_core: ^0.1.0-dev.2
 ```
 
 For GitHub-based integration, depend on the repository directly:
