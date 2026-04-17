@@ -53,30 +53,35 @@ class SshUserAuthProtocolAuthenticator implements SshAuthenticator {
 
   Future<void> _requestUserauthService(SshPacketTransport transport) async {
     await transport.writePacket(
-      SshServiceRequestMessage(serviceName: userauthServiceName)
-          .encodePayload(),
+      SshServiceRequestMessage(
+        serviceName: userauthServiceName,
+      ).encodePayload(),
     );
 
-    final SshBinaryPacket packet = await transport.readPacket();
-    switch (packet.messageId) {
-      case 6:
-        final SshServiceAcceptMessage accept =
-            SshServiceAcceptMessage.decodePayload(packet.payload);
-        if (accept.serviceName != userauthServiceName) {
+    for (;;) {
+      final SshBinaryPacket packet = await transport.readPacket();
+      switch (packet.messageId) {
+        case 6:
+          final SshServiceAcceptMessage accept =
+              SshServiceAcceptMessage.decodePayload(packet.payload);
+          if (accept.serviceName != userauthServiceName) {
+            throw SshAuthException(
+              'SSH peer accepted unexpected service "${accept.serviceName}".',
+            );
+          }
+          return;
+        case 53:
+          await _consumeBanner(packet);
+          continue;
+        case 7:
+          _consumeExtInfo(packet);
+          continue;
+        default:
           throw SshAuthException(
-            'SSH peer accepted unexpected service "${accept.serviceName}".',
+            'Unexpected SSH packet during userauth service negotiation: '
+            '${packet.messageId}.',
           );
-        }
-        return;
-      case 53:
-        await _consumeBanner(packet);
-        await _requestUserauthService(transport);
-        return;
-      default:
-        throw SshAuthException(
-          'Unexpected SSH packet during userauth service negotiation: '
-          '${packet.messageId}.',
-        );
+      }
     }
   }
 
@@ -177,6 +182,9 @@ class SshUserAuthProtocolAuthenticator implements SshAuthenticator {
         case 53:
           await _consumeBanner(packet);
           continue;
+        case 7:
+          _consumeExtInfo(packet);
+          continue;
         case 60:
           if (method is SshPublicKeyAuthMethod) {
             final String? authUsername = username;
@@ -237,6 +245,10 @@ class SshUserAuthProtocolAuthenticator implements SshAuthenticator {
 
   Future<void> _consumeBanner(SshBinaryPacket packet) async {
     SshUserAuthBannerMessage.decodePayload(packet.payload);
+  }
+
+  void _consumeExtInfo(SshBinaryPacket packet) {
+    SshExtInfoMessage.decodePayload(packet.payload);
   }
 
   Future<SshUserAuthRequestMessage> _buildSignedPublicKeyRequest({

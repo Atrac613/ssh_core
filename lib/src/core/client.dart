@@ -64,6 +64,7 @@ class SshClient {
 
       _state = SshClientState.connected;
     } catch (error) {
+      await _disconnectAfterFailedConnect();
       _state = SshClientState.idle;
       rethrow;
     }
@@ -201,6 +202,19 @@ class SshClient {
       throw SshHostKeyException(
         result.message ?? 'SSH host key verification failed.',
       );
+    }
+  }
+
+  Future<void> _disconnectAfterFailedConnect() async {
+    if (transport.state == SshTransportState.disconnected ||
+        transport.state == SshTransportState.closed) {
+      return;
+    }
+
+    try {
+      await transport.disconnect();
+    } catch (_) {
+      // Preserve the original connect failure.
     }
   }
 }

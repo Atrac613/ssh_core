@@ -20,10 +20,7 @@ void main() {
     final pc.RSASigner signer = pc.RSASigner(
       pc.SHA256Digest(),
       '0609608648016503040201',
-    )..init(
-        true,
-        pc.PrivateKeyParameter<pc.RSAPrivateKey>(keyPair.privateKey),
-      );
+    )..init(true, pc.PrivateKeyParameter<pc.RSAPrivateKey>(keyPair.privateKey));
 
     final SshSignature signature = SshSignature(
       algorithm: sshRsaSha256HostKeyAlgorithm,
@@ -93,13 +90,47 @@ void main() {
       macAlgorithm: sshHmacSha512Mac,
     );
 
-    final Uint8List encoded = writer.encode(
-      <int>[SshMessageId.ignore.value, 1, 2, 3, 4],
-    );
+    final Uint8List encoded = writer.encode(<int>[
+      SshMessageId.ignore.value,
+      1,
+      2,
+      3,
+      4,
+    ]);
     final SshBinaryPacket? packet = reader.tryRead(encoded);
 
     expect(packet, isNotNull);
     expect(packet!.messageId, SshMessageId.ignore.value);
+  });
+
+  test('protects packets with aes128-ctr and a non-zero sequence number', () {
+    final SshPacketWriterState writer = sshCreatePacketWriterState(
+      encryptionAlgorithm: sshAes128CtrCipher,
+      encryptionKey: List<int>.generate(16, (int index) => index + 1),
+      initialVector: List<int>.generate(16, (int index) => 16 - index),
+      macAlgorithm: sshHmacSha256Mac,
+      macKey: List<int>.generate(32, (int index) => 255 - index),
+      initialSequenceNumber: 3,
+    );
+    final SshPacketReaderState reader = sshCreatePacketReaderState(
+      encryptionAlgorithm: sshAes128CtrCipher,
+      encryptionKey: List<int>.generate(16, (int index) => index + 1),
+      initialVector: List<int>.generate(16, (int index) => 16 - index),
+      macAlgorithm: sshHmacSha256Mac,
+      macKey: List<int>.generate(32, (int index) => 255 - index),
+      initialSequenceNumber: 3,
+    );
+
+    final Uint8List encoded = writer.encode(<int>[
+      SshMessageId.serviceRequest.value,
+      9,
+      8,
+      7,
+    ]);
+    final SshBinaryPacket? packet = reader.tryRead(encoded);
+
+    expect(packet, isNotNull);
+    expect(packet!.messageId, SshMessageId.serviceRequest.value);
   });
 
   test('protects packets with chacha20-poly1305@openssh.com', () {
@@ -118,15 +149,52 @@ void main() {
       macKey: const <int>[],
     );
 
-    final Uint8List encoded = writer.encode(
-      <int>[SshMessageId.ignore.value, 5, 4, 3, 2, 1],
-    );
+    final Uint8List encoded = writer.encode(<int>[
+      SshMessageId.ignore.value,
+      5,
+      4,
+      3,
+      2,
+      1,
+    ]);
     final int? expectedFrameLength = reader.expectedFrameLength(encoded);
     final SshBinaryPacket? packet = reader.tryRead(encoded);
 
     expect(expectedFrameLength, encoded.length);
     expect(packet, isNotNull);
     expect(packet!.messageId, SshMessageId.ignore.value);
+  });
+
+  test(
+      'protects packets with chacha20-poly1305@openssh.com and a non-zero '
+      'sequence number', () {
+    final SshPacketWriterState writer = sshCreatePacketWriterState(
+      encryptionAlgorithm: sshChaCha20Poly1305OpenSshCipher,
+      encryptionKey: List<int>.generate(64, (int index) => index + 1),
+      initialVector: const <int>[],
+      macAlgorithm: sshHmacSha256Mac,
+      macKey: const <int>[],
+      initialSequenceNumber: 3,
+    );
+    final SshPacketReaderState reader = sshCreatePacketReaderState(
+      encryptionAlgorithm: sshChaCha20Poly1305OpenSshCipher,
+      encryptionKey: List<int>.generate(64, (int index) => index + 1),
+      initialVector: const <int>[],
+      macAlgorithm: sshHmacSha256Mac,
+      macKey: const <int>[],
+      initialSequenceNumber: 3,
+    );
+
+    final Uint8List encoded = writer.encode(<int>[
+      SshMessageId.serviceRequest.value,
+      6,
+      5,
+      4,
+    ]);
+    final SshBinaryPacket? packet = reader.tryRead(encoded);
+
+    expect(packet, isNotNull);
+    expect(packet!.messageId, SshMessageId.serviceRequest.value);
   });
 
   test('triggers rekey policy when thresholds are met', () {
@@ -212,9 +280,7 @@ _GeneratedEcdsaKeyPair _generateEcdsaKeyPairForCurve(
   pc.ECDomainParameters curve,
   List<int> seed,
 ) {
-  final pc.FortunaRandom random = _seededRandom(
-    seed,
-  );
+  final pc.FortunaRandom random = _seededRandom(seed);
   final pc.ECKeyGenerator generator = pc.ECKeyGenerator()
     ..init(
       pc.ParametersWithRandom<pc.ECKeyGeneratorParameters>(
@@ -240,7 +306,9 @@ void _expectEcdsaVerification({
   final _GeneratedEcdsaKeyPair keyPair = _generateEcdsaKeyPairForCurve(
     domainParameters,
     List<int>.generate(
-        32, (int index) => (curveName.codeUnitAt(0) + index) & 0xFF),
+      32,
+      (int index) => (curveName.codeUnitAt(0) + index) & 0xFF,
+    ),
   );
   final SshHostKey hostKey = SshHostKey.decode(
     (SshPayloadWriter()
@@ -250,10 +318,7 @@ void _expectEcdsaVerification({
         .toBytes(),
   );
   final pc.ECDSASigner signer = pc.Signer(signerName) as pc.ECDSASigner
-    ..init(
-      true,
-      pc.PrivateKeyParameter<pc.ECPrivateKey>(keyPair.privateKey),
-    );
+    ..init(true, pc.PrivateKeyParameter<pc.ECPrivateKey>(keyPair.privateKey));
   final pc.ECSignature signatureValue =
       signer.generateSignature(exchangeHash) as pc.ECSignature;
   final SshSignature signature = SshSignature(

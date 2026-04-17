@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import '../core/exceptions.dart';
 import 'host_key.dart';
+import 'message_codec.dart';
 
 class SshEndpoint {
   const SshEndpoint({required this.host, this.port = 22});
@@ -193,8 +195,9 @@ class SshTransportBanner {
     }
 
     final String protocolVersion = normalized.substring(4, protocolSeparator);
-    final String softwareAndComments =
-        normalized.substring(protocolSeparator + 1);
+    final String softwareAndComments = normalized.substring(
+      protocolSeparator + 1,
+    );
     if (softwareAndComments.isEmpty) {
       throw const FormatException(
         'SSH identification line must include a software version.',
@@ -383,10 +386,8 @@ class SshLineReader {
 }
 
 class SshBinaryPacket {
-  SshBinaryPacket({
-    required List<int> payload,
-    required List<int> padding,
-  })  : payload = Uint8List.fromList(payload),
+  SshBinaryPacket({required List<int> payload, required List<int> padding})
+      : payload = Uint8List.fromList(payload),
         padding = Uint8List.fromList(padding),
         paddingLength = padding.length,
         packetLength = 1 + payload.length + padding.length;
@@ -577,6 +578,7 @@ class SshTransportStream {
     for (;;) {
       final SshBinaryPacket? packet = _buffer.readPacket();
       if (packet != null) {
+        _throwIfDisconnectPacket(packet);
         return packet;
       }
 
@@ -602,6 +604,21 @@ class SshTransportStream {
     if (onClose != null) {
       await Future<void>.value(onClose());
     }
+  }
+
+  void _throwIfDisconnectPacket(SshBinaryPacket packet) {
+    if (packet.messageId != SshMessageId.disconnect.value) {
+      return;
+    }
+
+    final SshDisconnectMessage message = SshDisconnectMessage.decodePayload(
+      packet.payload,
+    );
+    throw SshDisconnectException(
+      reasonCode: message.reasonCode,
+      description: message.description,
+      languageTag: message.languageTag,
+    );
   }
 
   Future<bool> _fillBuffer() async {

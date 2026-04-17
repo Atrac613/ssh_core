@@ -22,9 +22,11 @@ SshPacketWriterState sshCreatePacketWriterState({
   required List<int> initialVector,
   required String macAlgorithm,
   required List<int> macKey,
+  int initialSequenceNumber = 0,
 }) {
-  final SshCipherAlgorithm cipher =
-      SshTransportAlgorithms.cipherAlgorithm(encryptionAlgorithm);
+  final SshCipherAlgorithm cipher = SshTransportAlgorithms.cipherAlgorithm(
+    encryptionAlgorithm,
+  );
   switch (cipher.protectionMode) {
     case SshPacketProtectionMode.plain:
       return SshPlainPacketWriterState(
@@ -36,11 +38,13 @@ SshPacketWriterState sshCreatePacketWriterState({
         initialVector: initialVector,
         macKey: macKey,
         macAlgorithm: macAlgorithm,
+        initialSequenceNumber: initialSequenceNumber,
         codec: SshPacketCodec(blockSize: cipher.blockSize),
       );
     case SshPacketProtectionMode.aead:
       return SshChaCha20Poly1305PacketWriterState(
         encryptionKey: encryptionKey,
+        initialSequenceNumber: initialSequenceNumber,
         codec: SshPacketCodec(blockSize: cipher.blockSize),
       );
   }
@@ -52,9 +56,11 @@ SshPacketReaderState sshCreatePacketReaderState({
   required List<int> initialVector,
   required String macAlgorithm,
   required List<int> macKey,
+  int initialSequenceNumber = 0,
 }) {
-  final SshCipherAlgorithm cipher =
-      SshTransportAlgorithms.cipherAlgorithm(encryptionAlgorithm);
+  final SshCipherAlgorithm cipher = SshTransportAlgorithms.cipherAlgorithm(
+    encryptionAlgorithm,
+  );
   switch (cipher.protectionMode) {
     case SshPacketProtectionMode.plain:
       return SshPlainPacketReaderState(
@@ -66,11 +72,13 @@ SshPacketReaderState sshCreatePacketReaderState({
         initialVector: initialVector,
         macKey: macKey,
         macAlgorithm: macAlgorithm,
+        initialSequenceNumber: initialSequenceNumber,
         codec: SshPacketCodec(blockSize: cipher.blockSize),
       );
     case SshPacketProtectionMode.aead:
       return SshChaCha20Poly1305PacketReaderState(
         encryptionKey: encryptionKey,
+        initialSequenceNumber: initialSequenceNumber,
         codec: SshPacketCodec(blockSize: cipher.blockSize),
       );
   }
@@ -118,22 +126,21 @@ class SshAesCtrHmacPacketWriterState implements SshPacketWriterState {
     required List<int> initialVector,
     required List<int> macKey,
     this.macAlgorithm = sshHmacSha256Mac,
+    int initialSequenceNumber = 0,
     SshPacketCodec? codec,
   })  : _cipher = _SshAesCtrCipher(
           key: encryptionKey,
           initialCounter: initialVector,
         ),
         _macKey = Uint8List.fromList(macKey),
-        _codec = codec ??
-            SshPacketCodec(
-              blockSize: initialVector.length,
-            );
+        _codec = codec ?? SshPacketCodec(blockSize: initialVector.length),
+        _sequenceNumber = initialSequenceNumber;
 
   final _SshAesCtrCipher _cipher;
   final Uint8List _macKey;
   final String macAlgorithm;
   final SshPacketCodec _codec;
-  int _sequenceNumber = 0;
+  int _sequenceNumber;
 
   @override
   Uint8List encode(List<int> payload) {
@@ -156,6 +163,7 @@ class SshAesCtrHmacPacketReaderState implements SshPacketReaderState {
     required List<int> initialVector,
     required List<int> macKey,
     required String macAlgorithm,
+    int initialSequenceNumber = 0,
     SshPacketCodec? codec,
   })  : _cipher = _SshAesCtrCipher(
           key: encryptionKey,
@@ -164,17 +172,15 @@ class SshAesCtrHmacPacketReaderState implements SshPacketReaderState {
         _macKey = Uint8List.fromList(macKey),
         _macAlgorithm = macAlgorithm,
         _macLength = sshMacLength(macAlgorithm),
-        _codec = codec ??
-            SshPacketCodec(
-              blockSize: initialVector.length,
-            );
+        _codec = codec ?? SshPacketCodec(blockSize: initialVector.length),
+        _sequenceNumber = initialSequenceNumber;
 
   final _SshAesCtrCipher _cipher;
   final Uint8List _macKey;
   final String _macAlgorithm;
   final int _macLength;
   final SshPacketCodec _codec;
-  int _sequenceNumber = 0;
+  int _sequenceNumber;
 
   @override
   int? expectedFrameLength(List<int> buffer) {
@@ -226,9 +232,11 @@ class SshAesCtrHmacPacketReaderState implements SshPacketReaderState {
 class SshChaCha20Poly1305PacketWriterState implements SshPacketWriterState {
   SshChaCha20Poly1305PacketWriterState({
     required List<int> encryptionKey,
+    int initialSequenceNumber = 0,
     SshPacketCodec? codec,
   })  : _key = Uint8List.fromList(encryptionKey),
-        _codec = codec ?? const SshPacketCodec() {
+        _codec = codec ?? const SshPacketCodec(),
+        _sequenceNumber = initialSequenceNumber {
     if (_key.length != 64) {
       throw ArgumentError.value(
         _key.length,
@@ -240,7 +248,7 @@ class SshChaCha20Poly1305PacketWriterState implements SshPacketWriterState {
 
   final Uint8List _key;
   final SshPacketCodec _codec;
-  int _sequenceNumber = 0;
+  int _sequenceNumber;
 
   @override
   Uint8List encode(List<int> payload) {
@@ -271,21 +279,21 @@ class SshChaCha20Poly1305PacketWriterState implements SshPacketWriterState {
     return Uint8List.fromList(<int>[...ciphertext, ...tag]);
   }
 
-  _SshOpenSshChaCha20Cipher get _payloadCipher => _SshOpenSshChaCha20Cipher(
-        key: _key.sublist(0, 32),
-      );
+  _SshOpenSshChaCha20Cipher get _payloadCipher =>
+      _SshOpenSshChaCha20Cipher(key: _key.sublist(0, 32));
 
-  _SshOpenSshChaCha20Cipher get _lengthCipher => _SshOpenSshChaCha20Cipher(
-        key: _key.sublist(32),
-      );
+  _SshOpenSshChaCha20Cipher get _lengthCipher =>
+      _SshOpenSshChaCha20Cipher(key: _key.sublist(32));
 }
 
 class SshChaCha20Poly1305PacketReaderState implements SshPacketReaderState {
   SshChaCha20Poly1305PacketReaderState({
     required List<int> encryptionKey,
+    int initialSequenceNumber = 0,
     SshPacketCodec? codec,
   })  : _key = Uint8List.fromList(encryptionKey),
-        _codec = codec ?? const SshPacketCodec() {
+        _codec = codec ?? const SshPacketCodec(),
+        _sequenceNumber = initialSequenceNumber {
     if (_key.length != 64) {
       throw ArgumentError.value(
         _key.length,
@@ -297,7 +305,7 @@ class SshChaCha20Poly1305PacketReaderState implements SshPacketReaderState {
 
   final Uint8List _key;
   final SshPacketCodec _codec;
-  int _sequenceNumber = 0;
+  int _sequenceNumber;
 
   @override
   int? expectedFrameLength(List<int> buffer) {
@@ -360,20 +368,16 @@ class SshChaCha20Poly1305PacketReaderState implements SshPacketReaderState {
     return packet;
   }
 
-  _SshOpenSshChaCha20Cipher get _payloadCipher => _SshOpenSshChaCha20Cipher(
-        key: _key.sublist(0, 32),
-      );
+  _SshOpenSshChaCha20Cipher get _payloadCipher =>
+      _SshOpenSshChaCha20Cipher(key: _key.sublist(0, 32));
 
-  _SshOpenSshChaCha20Cipher get _lengthCipher => _SshOpenSshChaCha20Cipher(
-        key: _key.sublist(32),
-      );
+  _SshOpenSshChaCha20Cipher get _lengthCipher =>
+      _SshOpenSshChaCha20Cipher(key: _key.sublist(32));
 }
 
 class _SshAesCtrCipher {
-  _SshAesCtrCipher({
-    required List<int> key,
-    required List<int> initialCounter,
-  })  : _key = Uint8List.fromList(key),
+  _SshAesCtrCipher({required List<int> key, required List<int> initialCounter})
+      : _key = Uint8List.fromList(key),
         _counter = Uint8List.fromList(initialCounter),
         _keystreamBlock = Uint8List(initialCounter.length),
         blockSize = initialCounter.length {
@@ -512,10 +516,7 @@ Uint8List _computeMac({
   );
 }
 
-Uint8List _poly1305Mac({
-  required List<int> key,
-  required List<int> message,
-}) {
+Uint8List _poly1305Mac({required List<int> key, required List<int> message}) {
   final Poly1305 poly1305 = Poly1305()
     ..init(KeyParameter(Uint8List.fromList(key)));
   final Uint8List source = Uint8List.fromList(message);

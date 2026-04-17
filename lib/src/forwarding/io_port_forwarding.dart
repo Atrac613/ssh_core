@@ -260,8 +260,6 @@ class SshIoPortForwardingService implements SshPortForwardingService {
     Socket socket,
     SshPacketChannel channel,
   ) async {
-    final Completer<void> stdoutCompleted = Completer<void>();
-    final Completer<void> stderrCompleted = Completer<void>();
     Object? bridgeError;
     StackTrace? bridgeStackTrace;
     bool bridgeClosed = false;
@@ -291,10 +289,29 @@ class SshIoPortForwardingService implements SshPortForwardingService {
       await channel.close();
     }
 
+    void pauseForOperation(
+      StreamSubscription<List<int>> subscription,
+      Future<void> operation,
+    ) {
+      subscription.pause();
+      unawaited(
+        operation.then(
+          (_) {
+            if (!bridgeClosed) {
+              subscription.resume();
+            }
+          },
+          onError: (Object error, StackTrace stackTrace) async {
+            recordError(error, stackTrace);
+            await closeBridge();
+          },
+        ),
+      );
+    }
+
     socketSubscription = socket.listen(
       (List<int> data) {
-        final Future<void> sendFuture = channel.sendData(data);
-        socketSubscription.pause(sendFuture);
+        pauseForOperation(socketSubscription, channel.sendData(data));
       },
       onDone: () async {
         try {
@@ -302,6 +319,7 @@ class SshIoPortForwardingService implements SshPortForwardingService {
         } catch (error, stackTrace) {
           recordError(error, stackTrace);
         }
+        await closeBridge();
       },
       onError: (Object error, StackTrace stackTrace) {
         recordError(error, stackTrace);
@@ -312,34 +330,22 @@ class SshIoPortForwardingService implements SshPortForwardingService {
     stdoutSubscription = channel.stdout.listen(
       (List<int> data) {
         socket.add(data);
-        stdoutSubscription.pause(socket.flush());
+        pauseForOperation(stdoutSubscription, socket.flush());
       },
       onDone: () {
-        if (!stdoutCompleted.isCompleted) {
-          stdoutCompleted.complete();
-        }
+        unawaited(closeBridge());
       },
       onError: (Object error, StackTrace stackTrace) {
         recordError(error, stackTrace);
-        if (!stdoutCompleted.isCompleted) {
-          stdoutCompleted.complete();
-        }
         unawaited(closeBridge());
       },
       cancelOnError: true,
     );
     stderrSubscription = channel.stderr.listen(
       (_) {},
-      onDone: () {
-        if (!stderrCompleted.isCompleted) {
-          stderrCompleted.complete();
-        }
-      },
       onError: (Object error, StackTrace stackTrace) {
         recordError(error, stackTrace);
-        if (!stderrCompleted.isCompleted) {
-          stderrCompleted.complete();
-        }
+        unawaited(closeBridge());
       },
       cancelOnError: true,
     );
@@ -347,9 +353,8 @@ class SshIoPortForwardingService implements SshPortForwardingService {
     try {
       await Future.any<dynamic>(<Future<dynamic>>[
         channel.done,
-        stdoutCompleted.future,
+        socket.done,
       ]);
-      await stderrCompleted.future;
     } finally {
       await closeBridge();
     }

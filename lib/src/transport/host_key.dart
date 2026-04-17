@@ -2,13 +2,13 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
+
 import 'message_codec.dart';
 
 class SshHostKey {
-  SshHostKey({
-    required this.algorithm,
-    required List<int> encodedBytes,
-  }) : encodedBytes = Uint8List.fromList(encodedBytes);
+  SshHostKey({required this.algorithm, required List<int> encodedBytes})
+      : encodedBytes = Uint8List.fromList(encodedBytes);
 
   factory SshHostKey.decode(List<int> encodedBytes) {
     final SshPayloadReader reader = SshPayloadReader(encodedBytes);
@@ -19,16 +19,18 @@ class SshHostKey {
     final SshPayloadWriter writer = SshPayloadWriter()
       ..writeString(algorithm)
       ..writeBytes(publicKeyData);
-    return SshHostKey(
-      algorithm: algorithm,
-      encodedBytes: writer.toBytes(),
-    );
+    return SshHostKey(algorithm: algorithm, encodedBytes: writer.toBytes());
   }
 
   final String algorithm;
   final Uint8List encodedBytes;
 
   String get base64Encoded => base64.encode(encodedBytes);
+
+  String get sha256Fingerprint {
+    final String digest = base64.encode(sha256.convert(encodedBytes).bytes);
+    return 'SHA256:${digest.replaceFirst(RegExp(r'=+$'), '')}';
+  }
 
   bool matches(SshHostKey other) {
     if (algorithm != other.algorithm) {
@@ -66,10 +68,7 @@ class SshHostKeyVerificationContext {
 }
 
 class SshHostKeyVerificationResult {
-  const SshHostKeyVerificationResult._({
-    required this.isSuccess,
-    this.message,
-  });
+  const SshHostKeyVerificationResult._({required this.isSuccess, this.message});
 
   const SshHostKeyVerificationResult.success({String? message})
       : this._(isSuccess: true, message: message);
@@ -85,6 +84,24 @@ abstract class SshHostKeyVerifier {
   Future<SshHostKeyVerificationResult> verify(
     SshHostKeyVerificationContext context,
   );
+}
+
+typedef SshHostKeyVerificationCallback = FutureOr<SshHostKeyVerificationResult>
+    Function(
+  SshHostKeyVerificationContext context,
+);
+
+class SshCallbackHostKeyVerifier implements SshHostKeyVerifier {
+  const SshCallbackHostKeyVerifier(this.callback);
+
+  final SshHostKeyVerificationCallback callback;
+
+  @override
+  Future<SshHostKeyVerificationResult> verify(
+    SshHostKeyVerificationContext context,
+  ) async {
+    return callback(context);
+  }
 }
 
 class SshAllowAnyHostKeyVerifier implements SshHostKeyVerifier {

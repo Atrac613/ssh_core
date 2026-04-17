@@ -6,6 +6,7 @@ enum SshMessageId {
   ignore(2),
   serviceRequest(5),
   serviceAccept(6),
+  extInfo(7),
   globalRequest(80),
   requestSuccess(81),
   requestFailure(82),
@@ -35,6 +36,84 @@ enum SshMessageId {
   const SshMessageId(this.value);
 
   final int value;
+}
+
+class SshDisconnectMessage {
+  const SshDisconnectMessage({
+    required this.reasonCode,
+    required this.description,
+    this.languageTag = '',
+  });
+
+  factory SshDisconnectMessage.decodePayload(List<int> payload) {
+    final SshPayloadReader reader = SshPayloadReader(payload);
+    final int messageId = reader.readByte();
+    if (messageId != SshMessageId.disconnect.value) {
+      throw FormatException(
+        'Expected SSH_MSG_DISCONNECT (${SshMessageId.disconnect.value}), '
+        'received $messageId.',
+      );
+    }
+
+    final SshDisconnectMessage message = SshDisconnectMessage(
+      reasonCode: reader.readUint32(),
+      description: reader.readString(),
+      languageTag: reader.readString(),
+    );
+    reader.expectDone();
+    return message;
+  }
+
+  final int reasonCode;
+  final String description;
+  final String languageTag;
+
+  Uint8List encodePayload() {
+    final SshPayloadWriter writer = SshPayloadWriter()
+      ..writeByte(SshMessageId.disconnect.value)
+      ..writeUint32(reasonCode)
+      ..writeString(description)
+      ..writeString(languageTag);
+    return writer.toBytes();
+  }
+}
+
+class SshExtInfoMessage {
+  SshExtInfoMessage({Map<String, String> entries = const <String, String>{}})
+      : entries = Map<String, String>.unmodifiable(entries);
+
+  factory SshExtInfoMessage.decodePayload(List<int> payload) {
+    final SshPayloadReader reader = SshPayloadReader(payload);
+    final int messageId = reader.readByte();
+    if (messageId != SshMessageId.extInfo.value) {
+      throw FormatException(
+        'Expected SSH_MSG_EXT_INFO (${SshMessageId.extInfo.value}), '
+        'received $messageId.',
+      );
+    }
+
+    final int entryCount = reader.readUint32();
+    final Map<String, String> entries = <String, String>{};
+    for (int index = 0; index < entryCount; index += 1) {
+      entries[reader.readString()] = reader.readString();
+    }
+    reader.expectDone();
+    return SshExtInfoMessage(entries: entries);
+  }
+
+  final Map<String, String> entries;
+
+  Uint8List encodePayload() {
+    final SshPayloadWriter writer = SshPayloadWriter()
+      ..writeByte(SshMessageId.extInfo.value)
+      ..writeUint32(entries.length);
+    for (final MapEntry<String, String> entry in entries.entries) {
+      writer
+        ..writeString(entry.key)
+        ..writeString(entry.value);
+    }
+    return writer.toBytes();
+  }
 }
 
 class SshPayloadWriter {

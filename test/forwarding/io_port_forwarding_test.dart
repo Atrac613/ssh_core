@@ -6,6 +6,123 @@ import 'package:ssh_core/ssh_core_io.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('closes the ssh channel when the local client disconnects', () async {
+    final _PacketForwardTransport transport = _PacketForwardTransport();
+    final SshPacketChannelFactory channelFactory = SshPacketChannelFactory(
+      transport: transport,
+    );
+    final SshIoPortForwardingService service = SshIoPortForwardingService(
+      transport: transport,
+      channelFactory: channelFactory,
+    );
+
+    final SshPortForward forward = await service.openForward(
+      const SshForwardRequest.local(
+        bindHost: '127.0.0.1',
+        bindPort: 0,
+        target: SshForwardTarget(host: '127.0.0.1', port: 22),
+      ),
+    );
+    final Socket client = await Socket.connect('127.0.0.1', forward.bindPort);
+
+    final SshChannelOpenMessage openMessage =
+        SshChannelOpenMessage.decodePayload(
+      await _waitForWrittenPayload(
+        transport,
+        (List<int> payload) =>
+            payload.isNotEmpty &&
+            payload.first == SshMessageId.channelOpen.value,
+      ),
+    );
+    transport.enqueuePacket(
+      SshChannelOpenConfirmationMessage(
+        recipientChannel: openMessage.senderChannel,
+        senderChannel: 700,
+        initialWindowSize: 64 * 1024,
+        maximumPacketSize: 32 * 1024,
+      ).encodePayload(),
+    );
+
+    await client.close();
+    await _waitForWrittenPayload(
+      transport,
+      (List<int> payload) =>
+          payload.isNotEmpty && payload.first == SshMessageId.channelEof.value,
+    );
+    final SshChannelCloseMessage closeMessage =
+        SshChannelCloseMessage.decodePayload(
+      await _waitForWrittenPayload(
+        transport,
+        (List<int> payload) =>
+            payload.isNotEmpty &&
+            payload.first == SshMessageId.channelClose.value,
+      ),
+    );
+
+    expect(closeMessage.recipientChannel, 700);
+
+    await forward.close();
+    await transport.close();
+  });
+
+  test('tears down the bridge when channel writes fail', () async {
+    final _PacketForwardTransport transport = _PacketForwardTransport(
+      failMessageIds: <int>{SshMessageId.channelData.value},
+    );
+    final SshPacketChannelFactory channelFactory = SshPacketChannelFactory(
+      transport: transport,
+    );
+    final SshIoPortForwardingService service = SshIoPortForwardingService(
+      transport: transport,
+      channelFactory: channelFactory,
+    );
+
+    final SshPortForward forward = await service.openForward(
+      const SshForwardRequest.local(
+        bindHost: '127.0.0.1',
+        bindPort: 0,
+        target: SshForwardTarget(host: '127.0.0.1', port: 22),
+      ),
+    );
+    final Socket client = await Socket.connect('127.0.0.1', forward.bindPort);
+
+    final SshChannelOpenMessage openMessage =
+        SshChannelOpenMessage.decodePayload(
+      await _waitForWrittenPayload(
+        transport,
+        (List<int> payload) =>
+            payload.isNotEmpty &&
+            payload.first == SshMessageId.channelOpen.value,
+      ),
+    );
+    transport.enqueuePacket(
+      SshChannelOpenConfirmationMessage(
+        recipientChannel: openMessage.senderChannel,
+        senderChannel: 701,
+        initialWindowSize: 64 * 1024,
+        maximumPacketSize: 32 * 1024,
+      ).encodePayload(),
+    );
+
+    client.add(utf8.encode('trigger failure'));
+    await client.flush();
+
+    final SshChannelCloseMessage closeMessage =
+        SshChannelCloseMessage.decodePayload(
+      await _waitForWrittenPayload(
+        transport,
+        (List<int> payload) =>
+            payload.isNotEmpty &&
+            payload.first == SshMessageId.channelClose.value,
+      ),
+    );
+    expect(closeMessage.recipientChannel, 701);
+    expect(await client.isEmpty.timeout(const Duration(seconds: 2)), isTrue);
+
+    await forward.close();
+    await transport.close();
+  });
+
   test('routes concurrent remote forwards to the matching targets', () async {
     final ServerSocket targetA = await ServerSocket.bind(
       InternetAddress.loopbackIPv4,
@@ -193,12 +310,32 @@ Future<List<SshChannelDataMessage>> _waitForChannelDataWrites(
   return transport.channelDataMessages;
 }
 
+Future<List<int>> _waitForWrittenPayload(
+  _PacketForwardTransport transport,
+  bool Function(List<int> payload) predicate,
+) async {
+  final DateTime deadline = DateTime.now().add(const Duration(seconds: 2));
+  while (DateTime.now().isBefore(deadline)) {
+    for (final List<int> payload in transport.writtenPayloads) {
+      if (predicate(payload)) {
+        return payload;
+      }
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+
+  throw StateError('Timed out waiting for a matching SSH payload.');
+}
+
 class _PacketForwardTransport
     implements SshPacketTransport, SshGlobalRequestReplyTransport {
-  _PacketForwardTransport({required List<SshGlobalRequestReply> replies})
-      : _replies = List<SshGlobalRequestReply>.from(replies);
+  _PacketForwardTransport({
+    List<SshGlobalRequestReply> replies = const <SshGlobalRequestReply>[],
+    this.failMessageIds = const <int>{},
+  }) : _replies = List<SshGlobalRequestReply>.from(replies);
 
   final List<SshGlobalRequestReply> _replies;
+  final Set<int> failMessageIds;
   final StreamController<SshBinaryPacket> _incomingController =
       StreamController<SshBinaryPacket>();
   StreamIterator<SshBinaryPacket>? _incomingIterator;
@@ -269,6 +406,10 @@ class _PacketForwardTransport
 
   @override
   Future<void> writePacket(List<int> payload) async {
+    if (payload.isNotEmpty && failMessageIds.contains(payload.first)) {
+      throw StateError(
+          'Injected SSH packet write failure for ${payload.first}.');
+    }
     writtenPayloads.add(List<int>.from(payload));
   }
 }

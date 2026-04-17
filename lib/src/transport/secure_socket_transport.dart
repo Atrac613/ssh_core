@@ -5,6 +5,7 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
+import '../core/exceptions.dart';
 import 'crypto.dart';
 import 'global_request.dart';
 import 'key_exchange.dart';
@@ -71,6 +72,8 @@ class SshSecureSocketTransport
   int _receivedPacketsSinceKeyExchange = 0;
   int _sentBytesSinceKeyExchange = 0;
   int _receivedBytesSinceKeyExchange = 0;
+  int _outgoingPacketSequenceNumber = 0;
+  int _incomingPacketSequenceNumber = 0;
   DateTime? _lastKeyExchangeAt;
   Object? _terminalError;
   StackTrace? _terminalStackTrace;
@@ -128,6 +131,8 @@ class SshSecureSocketTransport
       _delayedOutgoingCompressionPending = false;
       _activeRekey = null;
       _pendingClientKexInit = null;
+      _outgoingPacketSequenceNumber = 0;
+      _incomingPacketSequenceNumber = 0;
       _terminalError = null;
       _terminalStackTrace = null;
       _readLoop = null;
@@ -360,12 +365,14 @@ class SshSecureSocketTransport
     final int serverKeyLength = serverCipher.keyLength;
     final int clientMacKeyLength = clientCipher.macEmbedded
         ? 0
-        : _requireMacAlgorithm(negotiatedAlgorithms.macClientToServer)
-            .keyLength;
+        : _requireMacAlgorithm(
+            negotiatedAlgorithms.macClientToServer,
+          ).keyLength;
     final int serverMacKeyLength = serverCipher.macEmbedded
         ? 0
-        : _requireMacAlgorithm(negotiatedAlgorithms.macServerToClient)
-            .keyLength;
+        : _requireMacAlgorithm(
+            negotiatedAlgorithms.macServerToClient,
+          ).keyLength;
     final List<int> effectiveSessionIdentifier = Uint8List.fromList(
       sessionIdentifier ?? exchangeHash,
     );
@@ -386,11 +393,16 @@ class SshSecureSocketTransport
         0,
         clientKeyLength,
       ),
-      initialVector:
-          derivedKeys.initialIvClientToServer.sublist(0, clientIvLength),
-      macKey:
-          derivedKeys.integrityKeyClientToServer.sublist(0, clientMacKeyLength),
+      initialVector: derivedKeys.initialIvClientToServer.sublist(
+        0,
+        clientIvLength,
+      ),
+      macKey: derivedKeys.integrityKeyClientToServer.sublist(
+        0,
+        clientMacKeyLength,
+      ),
       macAlgorithm: negotiatedAlgorithms.macClientToServer,
+      initialSequenceNumber: _outgoingPacketSequenceNumber,
     );
     _readerState = sshCreatePacketReaderState(
       encryptionAlgorithm: negotiatedAlgorithms.encryptionServerToClient,
@@ -398,11 +410,16 @@ class SshSecureSocketTransport
         0,
         serverKeyLength,
       ),
-      initialVector:
-          derivedKeys.initialIvServerToClient.sublist(0, serverIvLength),
-      macKey:
-          derivedKeys.integrityKeyServerToClient.sublist(0, serverMacKeyLength),
+      initialVector: derivedKeys.initialIvServerToClient.sublist(
+        0,
+        serverIvLength,
+      ),
+      macKey: derivedKeys.integrityKeyServerToClient.sublist(
+        0,
+        serverMacKeyLength,
+      ),
       macAlgorithm: negotiatedAlgorithms.macServerToClient,
+      initialSequenceNumber: _incomingPacketSequenceNumber,
     );
     _configureCompression(negotiatedAlgorithms);
 
@@ -445,6 +462,7 @@ class SshSecureSocketTransport
       _outgoingCompression.compress(payload),
     );
     await writeBytes(encodedPacket);
+    _outgoingPacketSequenceNumber += 1;
     if (countTowardsRekey) {
       _sentPacketsSinceKeyExchange += 1;
       _sentBytesSinceKeyExchange += encodedPacket.length;
@@ -517,8 +535,9 @@ class SshSecureSocketTransport
   Future<void> _runReadLoop() async {
     try {
       for (;;) {
-        final SshBinaryPacket packet =
-            await _readApplicationPacketWithState(_readerState);
+        final SshBinaryPacket packet = await _readApplicationPacketWithState(
+          _readerState,
+        );
         final bool handledInternally = await _handleInternalPacket(packet);
         if (handledInternally) {
           continue;
@@ -563,9 +582,10 @@ class SshSecureSocketTransport
   Future<bool> _handleInternalPacket(SshBinaryPacket packet) async {
     switch (packet.messageId) {
       case 20:
-        await _handleRekey(
-          SshKexInitMessage.decodePayload(packet.payload),
-        );
+        await _handleRekey(SshKexInitMessage.decodePayload(packet.payload));
+        return true;
+      case 7:
+        SshExtInfoMessage.decodePayload(packet.payload);
         return true;
       case 81:
         return _completeGlobalRequestSuccess(packet.payload);
@@ -598,10 +618,8 @@ class SshSecureSocketTransport
         clientKexInit: clientKexInit,
         serverKexInit: serverKexInit,
         sessionIdentifier: currentHandshake.sessionIdentifier,
-        writePacket: (List<int> payload) => _writeCurrentPacket(
-          payload,
-          countTowardsRekey: false,
-        ),
+        writePacket: (List<int> payload) =>
+            _writeCurrentPacket(payload, countTowardsRekey: false),
         readPacket: () => _readApplicationPacketWithState(_readerState),
       );
 
@@ -799,6 +817,7 @@ class SshSecureSocketTransport
   Future<void> _writePlainPacket(List<int> payload) async {
     final SshPlainPacketWriterState writer = SshPlainPacketWriterState();
     await writeBytes(writer.encode(payload));
+    _outgoingPacketSequenceNumber += 1;
   }
 
   Future<SshBinaryPacket> _readPacketWithState(
@@ -814,6 +833,8 @@ class SshSecureSocketTransport
           throw StateError('SSH packet reader did not decode a packet.');
         }
         _incomingBuffer.removeRange(0, expectedLength);
+        _throwIfDisconnectPacket(packet);
+        _incomingPacketSequenceNumber += 1;
         return packet;
       }
 
@@ -875,6 +896,21 @@ class SshSecureSocketTransport
     Error.throwWithStackTrace(
       terminalError,
       _terminalStackTrace ?? StackTrace.current,
+    );
+  }
+
+  void _throwIfDisconnectPacket(SshBinaryPacket packet) {
+    if (packet.messageId != SshMessageId.disconnect.value) {
+      return;
+    }
+
+    final SshDisconnectMessage message = SshDisconnectMessage.decodePayload(
+      packet.payload,
+    );
+    throw SshDisconnectException(
+      reasonCode: message.reasonCode,
+      description: message.description,
+      languageTag: message.languageTag,
     );
   }
 

@@ -112,15 +112,15 @@ final class SshTransportAlgorithms {
   ];
 
   static const List<String> defaultEncryptionAlgorithms = <String>[
-    sshChaCha20Poly1305OpenSshCipher,
-    sshAes256CtrCipher,
-    sshAes192CtrCipher,
     sshAes128CtrCipher,
+    sshAes192CtrCipher,
+    sshAes256CtrCipher,
+    sshChaCha20Poly1305OpenSshCipher,
   ];
 
   static const List<String> defaultMacAlgorithms = <String>[
-    sshHmacSha512Mac,
     sshHmacSha256Mac,
+    sshHmacSha512Mac,
   ];
 
   static const List<String> defaultCompressionAlgorithms = <String>[
@@ -130,8 +130,9 @@ final class SshTransportAlgorithms {
   static const Map<String, SshKeyExchangeAlgorithm> _keyExchangeAlgorithms =
       <String, SshKeyExchangeAlgorithm>{
     sshCurve25519Sha256: SshKeyExchangeAlgorithm(sshCurve25519Sha256),
-    sshCurve25519Sha256LibSsh:
-        SshKeyExchangeAlgorithm(sshCurve25519Sha256LibSsh),
+    sshCurve25519Sha256LibSsh: SshKeyExchangeAlgorithm(
+      sshCurve25519Sha256LibSsh,
+    ),
   };
 
   static const Map<String, SshHostKeyAlgorithm> _hostKeyAlgorithms =
@@ -275,11 +276,7 @@ final class SshTransportAlgorithms {
   static SshMacAlgorithm macAlgorithm(String name) {
     final SshMacAlgorithm? algorithm = _macAlgorithms[name];
     if (algorithm == null) {
-      throw ArgumentError.value(
-        name,
-        'name',
-        'Unsupported SSH MAC algorithm.',
-      );
+      throw ArgumentError.value(name, 'name', 'Unsupported SSH MAC algorithm.');
     }
     return algorithm;
   }

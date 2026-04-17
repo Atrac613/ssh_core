@@ -5,6 +5,19 @@ stack. It defines the public API surface and the boundaries between transport,
 authentication, channels, sessions, PTY handling, exec, SFTP, and port
 forwarding.
 
+## Status
+
+`ssh_core` is currently experimental.
+
+- The package is usable for local development and interoperability work.
+- The public API is intentionally small, but some protocol details are still
+  moving as the transport hardening work continues.
+- `publish_to: none` is still set in `pubspec.yaml`, so the package is not yet
+  intended for `pub.dev`.
+- GitHub publication is a good fit for the current stage: the repository is
+  useful as an implementation log, a protocol playground, and an early
+  integration target.
+
 ## Scope
 
 This repository currently provides the package structure and the core
@@ -64,6 +77,20 @@ Not implemented yet:
 - `sftp`: file transfer subsystem contracts and packet helpers
 - `port forwarding`: local, remote, and dynamic forwarding contracts and packet helpers
 
+## Installation
+
+The package is not published on `pub.dev` yet. For now, use it as a local path
+dependency while the API and transport behavior continue to stabilize.
+
+```yaml
+dependencies:
+  ssh_core:
+    path: ../ssh_core
+```
+
+Once the public repository URL is finalized, this section can be expanded with
+a Git dependency example.
+
 ## Example
 
 ```dart
@@ -121,10 +148,18 @@ handshake steps:
 - `SshSocketTransport` in `package:ssh_core/ssh_core_io.dart`
 - `SshPayloadWriter`, `SshPayloadReader`, `mpint`, and `SshKexInitMessage`
 - `SshHostKey`, `SshHostKeyVerifier`, and `SshStaticHostKeyVerifier`
+- `SshCallbackHostKeyVerifier` for app-provided trust prompts and
+  `SshHostKey.sha256Fingerprint` for displaying the received host key
+- `SshDisconnectMessage` and `SshDisconnectException` for surfacing
+  server-provided disconnect reasons instead of generic EOF errors
 - `SshSignature`, `SshAlgorithmNegotiator`, `SshNegotiatedAlgorithms`, and KEX helpers
 - `SshLineReader` for chunked banner line parsing from socket bytes
 - `SshPacketCodec` for SSH binary packet framing
 - `SshPacketReader` for reading framed packets from chunked byte streams
+
+The default secure transport preference order currently favors
+`aes128-ctr` / `hmac-sha2-256` ahead of more complex options so OpenSSH
+interop works out of the box.
 
 For `dart:io` environments, `package:ssh_core/ssh_core_io.dart` now exposes:
 
@@ -147,6 +182,71 @@ Current secure transport interoperability is intentionally narrow and explicit:
 | Compression | `none`, `zlib`, `zlib@openssh.com` |
 | Auth | `none`, `password`, `publickey`, `keyboard-interactive` |
 | Forwarding | local, remote, dynamic TCP forwarding, including assigned remote ports |
+
+## Roadmap
+
+### Now
+
+- finish the in-flight transport hardening work around `strict-kex`,
+  `ext-info`, and clearer disconnect/error surfacing
+- keep strengthening focused tests for transport, auth, session lifecycle, and
+  forwarding shutdown paths
+- continue improving OpenSSH interoperability without widening the public API
+  unnecessarily
+
+### Next
+
+- broaden algorithm coverage beyond the current Curve25519 +
+  Ed25519/RSA/ECDSA + ChaCha20/AES-CTR + HMAC-SHA2 baseline
+- add more interoperability-focused integration coverage
+- tighten host-key trust UX for real applications
+
+### Later
+
+- add advanced forwarding variants beyond TCP local/remote/dynamic bridges
+- keep growing the live `dart:io` examples into copy-pasteable integration
+  recipes
+- prepare the package for a first public version and, eventually, `pub.dev`
+
+## Development
+
+Recommended local verification commands:
+
+```sh
+dart format .
+dart analyze
+dart test
+dart run tool/smoke_test.dart
+```
+
+Useful entry points:
+
+- `example/ssh_core_example.dart`: fake/demo wiring that compiles quickly
+- `example/ssh_core_io_example.dart`: live `dart:io` example for real SSH
+  endpoints
+- `tool/smoke_test.dart`: lightweight package-wide protocol sanity check
+
+## GitHub Readiness
+
+The repository now includes a GitHub Actions workflow at
+`.github/workflows/dart.yml` that runs:
+
+- `dart format --output=none --set-exit-if-changed .`
+- `dart analyze`
+- `dart test`
+- `dart run tool/smoke_test.dart`
+
+That gives GitHub pull requests a basic verification gate before the package is
+ready for a broader public release.
+
+## Publishing Notes
+
+Before tagging the first public GitHub release, it is worth checking:
+
+- the README still matches the actual compatibility matrix and examples
+- a repository license is present and clearly chosen
+- GitHub Actions is green on `main` and on incoming pull requests
+- release notes describe the current experimental scope and known gaps
 
 ## Suggested implementation order
 
