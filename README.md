@@ -57,14 +57,11 @@ Current status:
 
 ## Getting Started
 
-The package is not published on `pub.dev` yet.
-
-For local development, a path dependency is still convenient:
+Use a hosted dependency when consuming a published release:
 
 ```yaml
 dependencies:
-  ssh_core:
-    path: ../ssh_core
+  ssh_core: ^0.1.0-dev.1
 ```
 
 For GitHub-based integration, depend on the repository directly:
@@ -74,6 +71,14 @@ dependencies:
   ssh_core:
     git:
       url: https://github.com/Atrac613/ssh_core.git
+```
+
+For local development, a path dependency is still convenient:
+
+```yaml
+dependencies:
+  ssh_core:
+    path: ../ssh_core
 ```
 
 ## Quick Start
