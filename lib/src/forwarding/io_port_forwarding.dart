@@ -260,46 +260,107 @@ class SshIoPortForwardingService implements SshPortForwardingService {
     Socket socket,
     SshPacketChannel channel,
   ) async {
-    final StreamSubscription<List<int>> socketSubscription = socket.listen(
+    final Completer<void> stdoutCompleted = Completer<void>();
+    final Completer<void> stderrCompleted = Completer<void>();
+    Object? bridgeError;
+    StackTrace? bridgeStackTrace;
+    bool bridgeClosed = false;
+
+    void recordError(Object error, StackTrace stackTrace) {
+      bridgeError ??= error;
+      bridgeStackTrace ??= stackTrace;
+    }
+
+    late final StreamSubscription<List<int>> socketSubscription;
+    late final StreamSubscription<List<int>> stdoutSubscription;
+    late final StreamSubscription<List<int>> stderrSubscription;
+
+    Future<void> closeBridge() async {
+      if (bridgeClosed) {
+        return;
+      }
+      bridgeClosed = true;
+      await socketSubscription.cancel();
+      await stdoutSubscription.cancel();
+      await stderrSubscription.cancel();
+      try {
+        await socket.close();
+      } finally {
+        socket.destroy();
+      }
+      await channel.close();
+    }
+
+    socketSubscription = socket.listen(
       (List<int> data) {
-        unawaited(channel.sendData(data));
+        final Future<void> sendFuture = channel.sendData(data);
+        socketSubscription.pause(sendFuture);
+      },
+      onDone: () async {
+        try {
+          await channel.sendEof();
+        } catch (error, stackTrace) {
+          recordError(error, stackTrace);
+        }
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        recordError(error, stackTrace);
+        unawaited(closeBridge());
+      },
+      cancelOnError: true,
+    );
+    stdoutSubscription = channel.stdout.listen(
+      (List<int> data) {
+        socket.add(data);
+        stdoutSubscription.pause(socket.flush());
       },
       onDone: () {
-        unawaited(channel.sendEof());
-        unawaited(channel.close());
+        if (!stdoutCompleted.isCompleted) {
+          stdoutCompleted.complete();
+        }
       },
-      onError: (_, __) {
-        unawaited(channel.close());
-      },
-      cancelOnError: true,
-    );
-    final StreamSubscription<List<int>> stdoutSubscription =
-        channel.stdout.listen(
-      socket.add,
-      onDone: () async {
-        await socket.close();
-        socket.destroy();
-      },
-      onError: (_, __) {
-        socket.destroy();
+      onError: (Object error, StackTrace stackTrace) {
+        recordError(error, stackTrace);
+        if (!stdoutCompleted.isCompleted) {
+          stdoutCompleted.complete();
+        }
+        unawaited(closeBridge());
       },
       cancelOnError: true,
     );
-    final StreamSubscription<List<int>> stderrSubscription =
-        channel.stderr.listen(
+    stderrSubscription = channel.stderr.listen(
       (_) {},
+      onDone: () {
+        if (!stderrCompleted.isCompleted) {
+          stderrCompleted.complete();
+        }
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        recordError(error, stackTrace);
+        if (!stderrCompleted.isCompleted) {
+          stderrCompleted.complete();
+        }
+      },
+      cancelOnError: true,
     );
 
-    await Future.any<dynamic>(<Future<dynamic>>[
-      socket.done,
-      channel.done,
-    ]);
-    await socketSubscription.cancel();
-    await stdoutSubscription.cancel();
-    await stderrSubscription.cancel();
-    await socket.close();
-    socket.destroy();
-    await channel.close();
+    try {
+      await Future.any<dynamic>(<Future<dynamic>>[
+        channel.done,
+        stdoutCompleted.future,
+      ]);
+      await stderrCompleted.future;
+    } finally {
+      await closeBridge();
+    }
+
+    final Object? error = bridgeError;
+    if (error != null) {
+      Error.throwWithStackTrace(
+        error,
+        bridgeStackTrace ?? StackTrace.current,
+      );
+    }
   }
 
   Future<List<int>> _readSocksMessage({
