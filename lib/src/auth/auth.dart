@@ -48,8 +48,8 @@ class SshKeyboardInteractivePrompt {
   final bool echo;
 }
 
-typedef SshKeyboardInteractiveResponder =
-    Future<List<String>> Function(List<SshKeyboardInteractivePrompt> prompts);
+typedef SshKeyboardInteractiveResponder = Future<List<String>> Function(
+    List<SshKeyboardInteractivePrompt> prompts);
 
 class SshKeyboardInteractiveAuthMethod extends SshAuthMethod {
   const SshKeyboardInteractiveAuthMethod({required this.respond});
@@ -74,8 +74,8 @@ class SshAuthContext {
 
 class SshAuthResult {
   const SshAuthResult.success({this.message})
-    : isSuccess = true,
-      allowedMethods = const <String>[];
+      : isSuccess = true,
+        allowedMethods = const <String>[];
 
   const SshAuthResult.failure({
     this.message,

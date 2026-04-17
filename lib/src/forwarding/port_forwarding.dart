@@ -20,31 +20,31 @@ class SshForwardRequest {
     required int bindPort,
     required SshForwardTarget target,
   }) : this._(
-         mode: SshForwardingMode.local,
-         bindHost: bindHost,
-         bindPort: bindPort,
-         target: target,
-       );
+          mode: SshForwardingMode.local,
+          bindHost: bindHost,
+          bindPort: bindPort,
+          target: target,
+        );
 
   const SshForwardRequest.remote({
     required String bindHost,
     required int bindPort,
     required SshForwardTarget target,
   }) : this._(
-         mode: SshForwardingMode.remote,
-         bindHost: bindHost,
-         bindPort: bindPort,
-         target: target,
-       );
+          mode: SshForwardingMode.remote,
+          bindHost: bindHost,
+          bindPort: bindPort,
+          target: target,
+        );
 
   const SshForwardRequest.dynamic({
     required String bindHost,
     required int bindPort,
   }) : this._(
-         mode: SshForwardingMode.dynamic,
-         bindHost: bindHost,
-         bindPort: bindPort,
-       );
+          mode: SshForwardingMode.dynamic,
+          bindHost: bindHost,
+          bindPort: bindPort,
+        );
 
   final SshForwardingMode mode;
   final String bindHost;

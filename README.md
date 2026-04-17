@@ -32,23 +32,25 @@ Implemented in this scaffold:
 - transport global-request helpers for forwarding-related flows
 - transport algorithm negotiation for client/server `KEXINIT` proposals
 - host key parsing and verifier contracts for the pre-auth handshake
+- transport algorithm registry for supported KEX, host key, cipher, MAC, and compression lookups
 - ECDH key exchange message and exchange-hash input helpers
 - SSH signature blob helper for KEX reply parsing
 - `SSH_MSG_NEWKEYS` helper for the end of key exchange
 - transport banner parsing/exchange helpers and binary packet framing helpers
 - secure socket transport with Curve25519 key exchange, Ed25519 host-key
-  verification, RSA/ECDSA host-key verification, `aes*-ctr` packet
-  encryption, and `hmac-sha2-256` / `hmac-sha2-512`
+  verification, RSA/ECDSA host-key verification, `chacha20-poly1305@openssh.com`,
+  `aes*-ctr` packet encryption, and `hmac-sha2-256` / `hmac-sha2-512`
 - mid-session rekeying for secure socket transports
 - `zlib` and `zlib@openssh.com` compression for secure socket transports
 - `SshIoClientFactory` for wiring a live `SshClient` with protocol services
-- a smoke test that exercises the package with fake implementations
+- smoke and focused tests for secure transport, forwarding, and protocol helpers
 - example wiring showing how a concrete implementation can plug into the stack
 
 Not implemented yet:
 
-- broader host-key curves, ciphers, and MACs beyond the current
-  Ed25519/RSA/ECDSA + AES-CTR + HMAC-SHA2 set
+- strict-kex / `ext-info` negotiation and other Terrapin-oriented transport hardening
+- broader KEX, host-key, cipher, and MAC coverage beyond the current
+  Curve25519 + Ed25519/RSA/ECDSA + ChaCha20/AES-CTR + HMAC-SHA2 set
 - advanced forwarding variants beyond TCP local/remote/dynamic bridges
 
 ## Public modules
@@ -104,6 +106,8 @@ Future<void> main() async {
 ```
 
 See `example/ssh_core_example.dart` for a complete compiling example.
+See `example/ssh_core_io_example.dart` for a live `dart:io` example built on
+`SshIoClientFactory`.
 
 ## Transport Primitives
 
@@ -137,9 +141,9 @@ Current secure transport interoperability is intentionally narrow and explicit:
 | Category | Supported |
 | --- | --- |
 | KEX | `curve25519-sha256`, `curve25519-sha256@libssh.org` |
-| Host key | `ssh-ed25519`, `rsa-sha2-256`, `rsa-sha2-512`, `ecdsa-sha2-nistp256` |
-| Cipher | `aes128-ctr`, `aes192-ctr`, `aes256-ctr` |
-| MAC | `hmac-sha2-256`, `hmac-sha2-512` |
+| Host key | `ssh-ed25519`, `rsa-sha2-256`, `rsa-sha2-512`, `ecdsa-sha2-nistp256`, `ecdsa-sha2-nistp384`, `ecdsa-sha2-nistp521` |
+| Cipher | `chacha20-poly1305@openssh.com`, `aes128-ctr`, `aes192-ctr`, `aes256-ctr` |
+| MAC | embedded Poly1305 for `chacha20-poly1305@openssh.com`; `hmac-sha2-256`, `hmac-sha2-512` for AES-CTR |
 | Compression | `none`, `zlib`, `zlib@openssh.com` |
 | Auth | `none`, `password`, `publickey`, `keyboard-interactive` |
 | Forwarding | local, remote, dynamic TCP forwarding, including assigned remote ports |

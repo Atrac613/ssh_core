@@ -21,8 +21,8 @@ class SshChannelOpenRequest {
   const SshChannelOpenRequest.session({
     this.localWindow = const SshChannelWindow(),
     this.payload = const <String, Object?>{},
-  }) : type = SshChannelType.session,
-       subtype = null;
+  })  : type = SshChannelType.session,
+        subtype = null;
 
   final SshChannelType type;
   final String? subtype;

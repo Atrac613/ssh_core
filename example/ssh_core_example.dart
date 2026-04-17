@@ -58,35 +58,38 @@ class DemoTransport implements SshTransport {
     final SshKexInitMessage clientProposal = SshKexInitMessage(
       cookie: List<int>.filled(16, 1),
       kexAlgorithms: const <String>[
-        'curve25519-sha256',
+        sshCurve25519Sha256,
         'diffie-hellman-group14-sha256',
       ],
-      serverHostKeyAlgorithms: const <String>['ssh-ed25519', 'rsa-sha2-256'],
+      serverHostKeyAlgorithms: const <String>[
+        sshEd25519HostKeyAlgorithm,
+        sshRsaSha256HostKeyAlgorithm,
+      ],
       encryptionAlgorithmsClientToServer: const <String>[
-        'chacha20-poly1305@openssh.com',
+        sshChaCha20Poly1305OpenSshCipher,
       ],
       encryptionAlgorithmsServerToClient: const <String>[
-        'chacha20-poly1305@openssh.com',
+        sshChaCha20Poly1305OpenSshCipher,
       ],
-      macAlgorithmsClientToServer: const <String>['hmac-sha2-256'],
-      macAlgorithmsServerToClient: const <String>['hmac-sha2-256'],
-      compressionAlgorithmsClientToServer: const <String>['none'],
-      compressionAlgorithmsServerToClient: const <String>['none'],
+      macAlgorithmsClientToServer: const <String>[sshHmacSha256Mac],
+      macAlgorithmsServerToClient: const <String>[sshHmacSha256Mac],
+      compressionAlgorithmsClientToServer: const <String>[sshNoCompression],
+      compressionAlgorithmsServerToClient: const <String>[sshNoCompression],
     );
     final SshKexInitMessage serverProposal = SshKexInitMessage(
       cookie: List<int>.filled(16, 2),
-      kexAlgorithms: const <String>['curve25519-sha256'],
-      serverHostKeyAlgorithms: const <String>['ssh-ed25519'],
+      kexAlgorithms: const <String>[sshCurve25519Sha256],
+      serverHostKeyAlgorithms: const <String>[sshEd25519HostKeyAlgorithm],
       encryptionAlgorithmsClientToServer: const <String>[
-        'chacha20-poly1305@openssh.com',
+        sshChaCha20Poly1305OpenSshCipher,
       ],
       encryptionAlgorithmsServerToClient: const <String>[
-        'chacha20-poly1305@openssh.com',
+        sshChaCha20Poly1305OpenSshCipher,
       ],
-      macAlgorithmsClientToServer: const <String>['hmac-sha2-256'],
-      macAlgorithmsServerToClient: const <String>['hmac-sha2-256'],
-      compressionAlgorithmsClientToServer: const <String>['none'],
-      compressionAlgorithmsServerToClient: const <String>['none'],
+      macAlgorithmsClientToServer: const <String>[sshHmacSha256Mac],
+      macAlgorithmsServerToClient: const <String>[sshHmacSha256Mac],
+      compressionAlgorithmsClientToServer: const <String>[sshNoCompression],
+      compressionAlgorithmsServerToClient: const <String>[sshNoCompression],
     );
     final SshTransportStream transportStream = SshTransportStream(
       incoming: Stream<List<int>>.fromIterable(<List<int>>[
@@ -108,7 +111,7 @@ class DemoTransport implements SshTransport {
       clientEphemeralPublicKey: const <int>[3, 1, 4, 1, 5],
     );
     final SshSignature exchangeHashSignature = SshSignature(
-      algorithm: 'ssh-ed25519',
+      algorithm: sshEd25519HostKeyAlgorithm,
       blob: const <int>[3, 5, 8, 9],
     );
     final SshKexEcdhReplyMessage serverKeyExchange = SshKexEcdhReplyMessage(
