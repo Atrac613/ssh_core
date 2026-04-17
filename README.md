@@ -1,86 +1,65 @@
 # ssh_core
 
-`ssh_core` is an architecture-first Dart package for building an SSH client
-stack. It defines the public API surface and the boundaries between transport,
-authentication, channels, sessions, PTY handling, exec, SFTP, and port
-forwarding.
+[![CI](https://github.com/Atrac613/ssh_core/actions/workflows/dart.yml/badge.svg)](https://github.com/Atrac613/ssh_core/actions/workflows/dart.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+`ssh_core` is an experimental Dart SSH client core that focuses on protocol
+building blocks rather than a single monolithic client implementation.
+
+It defines clear boundaries between transport, authentication, channels,
+sessions, PTY handling, exec, SFTP, and port forwarding so higher-level
+packages or applications can compose the pieces they need.
 
 ## Status
 
-`ssh_core` is currently experimental.
+This repository is public and useful today for:
 
-- The package is usable for local development and interoperability work.
-- The public API is intentionally small, but some protocol details are still
-  moving as the transport hardening work continues.
-- `publish_to: none` is still set in `pubspec.yaml`, so the package is not yet
-  intended for `pub.dev`.
-- GitHub publication is a good fit for the current stage: the repository is
-  useful as an implementation log, a protocol playground, and an early
-  integration target.
+- SSH protocol exploration and interoperability work
+- building custom SSH clients on top of packet-capable abstractions
+- iterating on transport/auth/channel behavior in pure Dart
 
-## Scope
+Current status:
 
-This repository currently provides the package structure and the core
-interfaces. It is designed so the protocol implementation can be added in
-layers without changing the top-level API shape.
+- the package is still experimental
+- `publish_to: none` is still set, so it is not ready for `pub.dev`
+- the public API is intentionally small, but some low-level transport details
+  are still evolving
 
-Implemented in this scaffold:
+## What It Is
 
-- `SshClient` orchestration and connection state management
-- transport, auth, channel, session, PTY, exec, SFTP, and forwarding contracts
-- auth service and userauth packet helpers for protocol flows
-- protocol authenticator for `none`, `password`, `publickey`, and keyboard-interactive
-- channel packet helpers for open/data/request/window/close flows
-- packet-backed channel factory for open/request/data/close handling
-- packet-backed shell session manager and exec service
-- session and exec channel-request helpers including PTY/env/exit messages
-- SFTP packet helpers for init/version/open/read/write/status/name flows
-- packet-backed SFTP subsystem for list/read/write/mkdir/delete flows
-- forwarding packet helpers for `tcpip-forward` and TCP/IP channel payloads
-- SOCKS5 helpers for dynamic port-forward request and reply parsing
-- IO-backed local, remote, and dynamic port forwarding bridges
-- remote port-forward control service built on SSH global requests
-- remote port-forward control with server-assigned remote port support
-- transport payload/message codec and `SSH_MSG_KEXINIT` helper
-- transport global-request helpers for forwarding-related flows
-- transport algorithm negotiation for client/server `KEXINIT` proposals
-- host key parsing and verifier contracts for the pre-auth handshake
-- transport algorithm registry for supported KEX, host key, cipher, MAC, and compression lookups
-- ECDH key exchange message and exchange-hash input helpers
-- SSH signature blob helper for KEX reply parsing
-- `SSH_MSG_NEWKEYS` helper for the end of key exchange
-- transport banner parsing/exchange helpers and binary packet framing helpers
-- secure socket transport with Curve25519 key exchange, Ed25519 host-key
-  verification, RSA/ECDSA host-key verification, `chacha20-poly1305@openssh.com`,
-  `aes*-ctr` packet encryption, and `hmac-sha2-256` / `hmac-sha2-512`
-- mid-session rekeying for secure socket transports
-- `zlib` and `zlib@openssh.com` compression for secure socket transports
-- `SshIoClientFactory` for wiring a live `SshClient` with protocol services
-- smoke and focused tests for secure transport, forwarding, and protocol helpers
-- example wiring showing how a concrete implementation can plug into the stack
+- A Dart-first SSH client core with separable modules
+- A transport layer with real secure socket support
+- A protocol toolkit for auth, channels, sessions, SFTP, and forwarding
+- A codebase aimed at incremental implementation rather than big rewrites
 
-Not implemented yet:
+## What It Is Not
 
-- strict-kex / `ext-info` negotiation and other Terrapin-oriented transport hardening
-- broader KEX, host-key, cipher, and MAC coverage beyond the current
-  Curve25519 + Ed25519/RSA/ECDSA + ChaCha20/AES-CTR + HMAC-SHA2 set
-- advanced forwarding variants beyond TCP local/remote/dynamic bridges
+- A polished end-user SSH CLI
+- A stable `1.0` API
+- A full interoperability matrix across every SSH server and algorithm variant
+- A replacement for OpenSSH
 
-## Public modules
+## Highlights
 
-- `transport`: socket lifecycle, handshake metadata, and global requests
-- `auth`: authentication strategies, auth results, and userauth packet helpers
-- `channels`: generic channel lifecycle and channel packet helpers
-- `sessions`: shell/session abstractions and session channel-request helpers
-- `pty`: terminal allocation and resize metadata
-- `exec`: non-interactive command execution
-- `sftp`: file transfer subsystem contracts and packet helpers
-- `port forwarding`: local, remote, and dynamic forwarding contracts and packet helpers
+- `SshClient` orchestration with injectable transport/auth/session services
+- `SshSecureSocketTransport` with:
+  - Curve25519 key exchange
+  - Ed25519 / RSA / ECDSA host-key verification
+  - `chacha20-poly1305@openssh.com`
+  - `aes128-ctr`, `aes192-ctr`, `aes256-ctr`
+  - `hmac-sha2-256`, `hmac-sha2-512`
+  - `zlib` and `zlib@openssh.com`
+  - mid-session rekeying
+- Packet-backed channel, shell, exec, SFTP, and forwarding services
+- Local, remote, and dynamic TCP port forwarding bridges
+- Focused tests plus a package-level smoke test
+- A live `dart:io` example via `SshIoClientFactory`
 
-## Installation
+## Getting Started
 
-The package is not published on `pub.dev` yet. For now, use it as a local path
-dependency while the API and transport behavior continue to stabilize.
+The package is not published on `pub.dev` yet.
+
+For local development, a path dependency is still convenient:
 
 ```yaml
 dependencies:
@@ -88,10 +67,16 @@ dependencies:
     path: ../ssh_core
 ```
 
-Once the public repository URL is finalized, this section can be expanded with
-a Git dependency example.
+For GitHub-based integration, depend on the repository directly:
 
-## Example
+```yaml
+dependencies:
+  ssh_core:
+    git:
+      url: https://github.com/Atrac613/ssh_core.git
+```
+
+## Quick Start
 
 ```dart
 import 'package:ssh_core/ssh_core.dart';
@@ -103,17 +88,18 @@ Future<void> main() async {
           ..writeStringBytes(const [1, 2, 3, 4, 5, 6]))
         .toBytes(),
   );
+
   final client = SshClient(
     config: SshClientConfig(
       host: 'example.com',
       username: 'demo',
       hostKeyVerifier: SshStaticHostKeyVerifier(
-        trustedKeys: [
+        trustedKeys: <SshTrustedHostKey>[
           SshTrustedHostKey(host: 'example.com', hostKey: trustedHostKey),
         ],
       ),
     ),
-    authMethods: const [
+    authMethods: const <SshAuthMethod>[
       SshPasswordAuthMethod(password: 'secret'),
     ],
     transport: DemoTransport(hostKey: trustedHostKey),
@@ -132,42 +118,50 @@ Future<void> main() async {
 }
 ```
 
-See `example/ssh_core_example.dart` for a complete compiling example.
-See `example/ssh_core_io_example.dart` for a live `dart:io` example built on
-`SshIoClientFactory`.
+For complete examples:
 
-## Transport Primitives
+- [`example/ssh_core_example.dart`](example/ssh_core_example.dart): fake/demo
+  wiring that compiles quickly
+- [`example/ssh_core_io_example.dart`](example/ssh_core_io_example.dart): live
+  `dart:io` example built on `SshIoClientFactory`
 
-The transport module now includes low-level helpers for the earliest SSH
-handshake steps:
+## Public API
 
-- `SshTransportBanner` and `SshBannerExchange` for SSH identification strings
-- `SshTransportBuffer` for mixed line and packet reads from one byte stream
-- `SshTransportStream` for async banner and packet I/O over byte streams
-- `SshPacketTransport` for modules that need packet-level SSH access
-- `SshSocketTransport` in `package:ssh_core/ssh_core_io.dart`
-- `SshPayloadWriter`, `SshPayloadReader`, `mpint`, and `SshKexInitMessage`
-- `SshHostKey`, `SshHostKeyVerifier`, and `SshStaticHostKeyVerifier`
-- `SshCallbackHostKeyVerifier` for app-provided trust prompts and
-  `SshHostKey.sha256Fingerprint` for displaying the received host key
-- `SshDisconnectMessage` and `SshDisconnectException` for surfacing
-  server-provided disconnect reasons instead of generic EOF errors
-- `SshSignature`, `SshAlgorithmNegotiator`, `SshNegotiatedAlgorithms`, and KEX helpers
-- `SshLineReader` for chunked banner line parsing from socket bytes
-- `SshPacketCodec` for SSH binary packet framing
-- `SshPacketReader` for reading framed packets from chunked byte streams
+The main package entry points are:
 
-The default secure transport preference order currently favors
-`aes128-ctr` / `hmac-sha2-256` ahead of more complex options so OpenSSH
-interop works out of the box.
+- `package:ssh_core/ssh_core.dart`
+- `package:ssh_core/ssh_core_io.dart`
 
-For `dart:io` environments, `package:ssh_core/ssh_core_io.dart` now exposes:
+Primary public surfaces:
 
-- `SshSocketTransport` for banner exchange and plain packet I/O primitives
-- `SshSecureSocketTransport` for the initial secure handshake and encrypted
-  packet transport
-- `SshIoClientFactory` for building a live `SshClient` with protocol-backed
-  auth, channels, shell/exec, SFTP, and forwarding services
+- `SshClient`: top-level orchestration
+- `SshTransport` / `SshPacketTransport`: transport contracts
+- `SshSecureSocketTransport`: real secure `dart:io` transport
+- `SshAuthenticator` and protocol auth helpers
+- `SshPacketChannelFactory`: packet-backed channel multiplexer
+- `SshProtocolSessionManager`: shell sessions with PTY/env requests
+- `SshProtocolExecService`: non-interactive command execution
+- `SshProtocolSftpSubsystem`: packet-backed SFTP client
+- `SshIoPortForwardingService`: local/remote/dynamic forwarding bridges
+- `SshIoClientFactory`: convenience wiring for live clients
+
+## Transport Coverage
+
+Transport primitives currently include:
+
+- SSH identification banner parsing and exchange
+- packet framing and payload codecs
+- `KEXINIT`, ECDH init/reply, `NEWKEYS`, disconnect, and ext-info messages
+- algorithm negotiation helpers
+- host-key parsing and verification helpers
+- exchange-hash and key-derivation helpers
+- encrypted packet protection for AES-CTR/HMAC and ChaCha20-Poly1305
+
+Not implemented yet:
+
+- strict-kex / full Terrapin-oriented transport hardening
+- broader KEX coverage beyond the current Curve25519 baseline
+- broader cipher / MAC coverage beyond the current explicit matrix
 
 ## Compatibility Matrix
 
@@ -182,6 +176,38 @@ Current secure transport interoperability is intentionally narrow and explicit:
 | Compression | `none`, `zlib`, `zlib@openssh.com` |
 | Auth | `none`, `password`, `publickey`, `keyboard-interactive` |
 | Forwarding | local, remote, dynamic TCP forwarding, including assigned remote ports |
+
+## Repository Layout
+
+- `lib/ssh_core.dart`: main public exports
+- `lib/ssh_core_io.dart`: `dart:io`-specific exports
+- `lib/src/transport/`: handshake, crypto, packet protection, secure transport
+- `lib/src/auth/`: auth models and protocol authenticator
+- `lib/src/channels/`: channel contracts and packet-backed implementation
+- `lib/src/sessions/`: shell/session abstractions and helpers
+- `lib/src/exec/`: non-interactive exec abstractions and implementation
+- `lib/src/sftp/`: SFTP contracts and packet-backed subsystem
+- `lib/src/forwarding/`: forwarding contracts, protocol helpers, IO bridges
+- `example/`: usage examples
+- `test/`: focused tests
+- `tool/smoke_test.dart`: lightweight end-to-end sanity check
+
+## Development
+
+Run the standard verification set:
+
+```sh
+dart format .
+dart analyze
+dart test
+dart run tool/smoke_test.dart
+```
+
+GitHub Actions runs the same checks in `.github/workflows/dart.yml`.
+
+If you want to contribute, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+Please also follow the lightweight expectations in
+[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 
 ## Roadmap
 
@@ -208,52 +234,12 @@ Current secure transport interoperability is intentionally narrow and explicit:
   recipes
 - prepare the package for a first public version and, eventually, `pub.dev`
 
-## Development
-
-Recommended local verification commands:
-
-```sh
-dart format .
-dart analyze
-dart test
-dart run tool/smoke_test.dart
-```
-
-Useful entry points:
-
-- `example/ssh_core_example.dart`: fake/demo wiring that compiles quickly
-- `example/ssh_core_io_example.dart`: live `dart:io` example for real SSH
-  endpoints
-- `tool/smoke_test.dart`: lightweight package-wide protocol sanity check
-
-## GitHub Readiness
-
-The repository now includes a GitHub Actions workflow at
-`.github/workflows/dart.yml` that runs:
-
-- `dart format --output=none --set-exit-if-changed .`
-- `dart analyze`
-- `dart test`
-- `dart run tool/smoke_test.dart`
-
-That gives GitHub pull requests a basic verification gate before the package is
-ready for a broader public release.
-
 ## Publishing Notes
 
 Before tagging the first public GitHub release, it is worth checking:
 
 - the README still matches the actual compatibility matrix and examples
-- a repository license is present and clearly chosen
-- GitHub Actions is green on `main` and on incoming pull requests
-- release notes describe the current experimental scope and known gaps
-
-## Suggested implementation order
-
-1. transport socket integration around packet codec and banner exchange
-2. key exchange and host-key verification
-3. user authentication service
-4. channel multiplexer and session channels
-5. exec and shell requests with PTY support
-6. SFTP subsystem
-7. local, remote, and dynamic port forwarding
+- the MIT license remains the intended choice
+- GitHub Actions is green on `main` and on pull requests
+- issue and pull request templates still match the current maintenance workflow
+- release notes describe the experimental scope and known gaps
