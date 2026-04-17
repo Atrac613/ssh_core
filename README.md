@@ -241,5 +241,4 @@ Before tagging the first public GitHub release, it is worth checking:
 - the README still matches the actual compatibility matrix and examples
 - the MIT license remains the intended choice
 - GitHub Actions is green on `main` and on pull requests
-- issue and pull request templates still match the current maintenance workflow
 - release notes describe the experimental scope and known gaps
